@@ -1,1 +1,1 @@
-{ "name": "mission-control", "version": "0.1.0", "description": "Mission Control: Crew, Cache and Spend stacked in one scrollable side panel", "dependencies": ["agent-progress", "cache-tax", "spend-ledger"] }
+{"name": "mission-control", "version": "0.2.0", "description": "Mission Control: Crew, Cache, Spend and Sessions stacked in one scrollable side panel", "dependencies": ["agent-progress", "cache-tax", "spend-ledger", "session-link"]}

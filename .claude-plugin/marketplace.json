@@ -1,10 +1,33 @@
 {
   "name": "session-dashboard",
-  "owner": { "name": "kimathinjoki" },
+  "owner": {
+    "name": "kimathinjoki"
+  },
   "plugins": [
-    { "name": "agent-progress", "source": "./plugins/agent-progress", "description": "Crew: every sub-agent at work, with worker avatars, live activity, cache bars and warnings" },
-    { "name": "cache-tax", "source": "./plugins/cache-tax", "description": "Cache: prompt cache countdown, hit sparkline, cold warnings and keep-warm" },
-    { "name": "spend-ledger", "source": "./plugins/spend-ledger", "description": "Spend: what each prompt and sub-agent cost, burn rate, budget and insights" },
-    { "name": "mission-control", "source": "./plugins/mission-control", "description": "Mission Control: Crew, Cache and Spend stacked in one side panel" }
+    {
+      "name": "agent-progress",
+      "source": "./plugins/agent-progress",
+      "description": "Crew: every sub-agent at work, with worker avatars, live activity, cache bars and warnings"
+    },
+    {
+      "name": "cache-tax",
+      "source": "./plugins/cache-tax",
+      "description": "Cache: prompt cache countdown, hit sparkline, cold warnings and keep-warm"
+    },
+    {
+      "name": "spend-ledger",
+      "source": "./plugins/spend-ledger",
+      "description": "Spend: what each prompt and sub-agent cost, burn rate, budget and insights"
+    },
+    {
+      "name": "session-link",
+      "source": "./plugins/session-link",
+      "description": "Session Link: live Claude sessions on this machine, each with its own label and badge, the messages between them, and a guard against overwriting each other's files or git work"
+    },
+    {
+      "name": "mission-control",
+      "source": "./plugins/mission-control",
+      "description": "Mission Control: Crew, Cache, Spend and Sessions stacked in one side panel"
+    }
   ]
 }

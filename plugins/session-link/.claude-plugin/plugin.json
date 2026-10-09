@@ -1,0 +1,1 @@
+{ "name": "session-link", "version": "0.1.0", "description": "Session Link: a side panel of the live Claude sessions on this machine, the messages between them, and a guard that stops one session overwriting another's files or sweeping up its uncommitted work in a shared git repository", "types": "./types/index.d.ts" }

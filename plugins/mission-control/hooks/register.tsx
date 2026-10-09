@@ -6,6 +6,7 @@ const agents = atom({ plugin: 'agent-progress', key: 'agents' } as const, [])
 const crewTick = atom({ plugin: 'agent-progress', key: 'tick' } as const, 0)
 const reading = atom({ plugin: 'cache-tax', key: 'reading' } as const, null as never)
 const ledger = atom({ plugin: 'spend-ledger', key: 'ledger' } as const, null as never)
+const link = atom({ plugin: 'session-link', key: 'view' } as const, null as never)
 
 const PANE = 'mission-control'
 const SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -42,7 +43,7 @@ const clock = (ms: number) => {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'mission', description: 'Open Mission Control: Crew, Cache and Spend stacked in one panel' })
+    await $.command.register({ name: 'mission', description: 'Open Mission Control: Crew, Cache, Spend and Sessions stacked in one panel' })
     void $.ui.open({ id: PANE, title: 'Mission' })
     return next(e)
   })
@@ -60,6 +61,7 @@ export const register: Register = on => {
     const frame = (await read($, crewTick)) ?? 0
     const cache = (await read($, reading)) as any
     const spend = (await read($, ledger)) as any
+    const sessions = (await read($, link)) as any
 
     const Section = ({ title, hue, right }: { title: string; hue: string; right?: string }) => (
       <Box flexDirection="column" marginTop={1}>
@@ -191,6 +193,26 @@ export const register: Register = on => {
           )
         })}
         {entries.length > 6 && <Text dimColor>+ {entries.length - 6} more in /spend</Text>}
+        <Section title="⇄ SESSIONS" hue="#f472b6" right={sessions ? `${sessions.sessions.length} live · ${sessions.overlaps.length} overlap` : 'Session Link off'} />
+        {!sessions && <Text dimColor>Session Link is not loaded.</Text>}
+        {(sessions?.sessions ?? []).map((s: any) => (
+          <Text key={s.name} wrap="truncate-end">
+            <Text color={s.hue} bold>{s.glyph} {s.label ?? s.name}</Text>
+            <Text dimColor>{s.isSelf ? ' (this one)' : ''}{s.branch ? `  ⎇ ${s.branch}` : ''}  </Text>
+            <Text color={s.status === 'busy' ? '#4ade80' : '#94a3b8'}>● {s.status}</Text>
+          </Text>
+        ))}
+        {(sessions?.overlaps ?? []).slice(0, 3).map((o: any) => (
+          <Text key={o.path} wrap="truncate-start" color="#f97316">⚠ {o.path}  {o.names.join(' + ')}</Text>
+        ))}
+        {(sessions?.messages ?? []).slice(-2).map((m: any) => (
+          <Text key={`${m.from}-${m.at}`} wrap="truncate-end">
+            <Text color={m.fromHue}>{m.fromGlyph}</Text>
+            <Text dimColor> → </Text>
+            <Text color={m.toHue}>{m.toGlyph}</Text>
+            <Text dimColor>  {m.text}</Text>
+          </Text>
+        ))}
         <Section title="▸ CONTROLS" hue="#e2e8f0" />
         <Box gap={1} flexWrap="wrap">
           <Button key="warm" hotkey="w" label={cache?.keepWarm ? 'Stop keeping warm' : 'Keep cache warm'} onPress={() => void $.command.run({ command: 'keepwarm' })} />
@@ -202,6 +224,7 @@ export const register: Register = on => {
           <Button key="crew" hotkey="c" label="Crew" onPress={() => void $.command.run({ command: 'crew' })} />
           <Button key="cachepane" hotkey="k" label="Cache" onPress={() => void $.command.run({ command: 'keepwarm', args: 'panel' })} />
           <Button key="spendpane" hotkey="s" label="Spend" onPress={() => void $.command.run({ command: 'spend' })} />
+          <Button key="linkpane" hotkey="l" label="Sessions" onPress={() => void $.command.run({ command: 'link' })} />
         </Box>
       </Box>
     )
