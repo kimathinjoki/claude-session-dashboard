@@ -141,7 +141,8 @@ export const register: Register = on => {
             {(() => {
               // Same estimate as the Cache panel: a token priced from /cost, then the cache multipliers.
               const factor = (m: string) => (/haiku/i.test(m) ? 1 : /sonnet/i.test(m) ? 3 : /opus|fable/i.test(m) ? 5 : 3)
-              const base = cache.sessionUsd && cache.weightedAll > 0 ? (cache.sessionUsd / cache.weightedAll) * factor(cache.mainModel || 'opus') : null
+              const spentSince = cache.sessionUsd != null && cache.usdBaseline != null ? cache.sessionUsd - cache.usdBaseline : 0
+              const base = spentSince > 0 && (cache.weightedAll ?? 0) >= 200_000 ? (spentSince / cache.weightedAll) * factor(cache.mainModel || 'opus') : null
               if (base === null) return null
               const write = (cache.ttlMinutes ?? 60) >= 60 ? 2 : 1.25
               const saved = (cache.readTokens ?? 0) * 0.9 * base

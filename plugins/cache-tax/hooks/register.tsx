@@ -6,7 +6,7 @@ import type { CacheReading } from '../types'
 const initial: CacheReading = {
   lastRequestAt: null, cachedTokens: 0, ttlMinutes: 60, keepWarm: false, pings: 0, lastPingAt: null,
   history: [], readTokens: 0, writtenTokens: 0, coldStarts: 0,
-  rewrittenTokens: 0, pingReadTokens: 0, weightedAll: 0, sessionUsd: null, mainModel: '',
+  rewrittenTokens: 0, pingReadTokens: 0, weightedAll: 0, sessionUsd: null, usdBaseline: null, mainModel: '',
 }
 const reading = atom({ plugin: 'cache-tax', key: 'reading' } as const, initial)
 const tick = atom({ plugin: 'cache-tax', key: 'tick' } as const, 0)
@@ -40,8 +40,14 @@ export const weightOf = (
   modelFactor(model)
 
 // The main thread's base input price per token, estimated from what the session actually cost.
-export const basePrice = (r: Pick<CacheReading, 'sessionUsd' | 'weightedAll' | 'mainModel'>) =>
-  r.sessionUsd && r.weightedAll > 0 ? (r.sessionUsd / r.weightedAll) * modelFactor(r.mainModel || 'opus') : null
+// Below this many weighted units the estimate is noise, and the panel says it is calibrating.
+export const MIN_WEIGHT = 200_000
+
+export const basePrice = (r: Pick<CacheReading, 'sessionUsd' | 'usdBaseline' | 'weightedAll' | 'mainModel'>) => {
+  if (r.sessionUsd == null || r.usdBaseline == null || r.weightedAll < MIN_WEIGHT) return null
+  const spent = r.sessionUsd - r.usdBaseline
+  return spent > 0 ? (spent / r.weightedAll) * modelFactor(r.mainModel || 'opus') : null
+}
 
 export type CacheCosts = { spent: number; saved: number; coldTax: number; pings: number; ifColdNow: number }
 
@@ -135,7 +141,14 @@ export const register: Register = on => {
     $.clock.every(TICK_MS, async () => {
       const now = await $.clock.now()
       const usage = await $.session.usage()
-      await update($, reading, saved => ({ ...initial, ...saved, sessionUsd: usage.cost?.usd ?? null }))
+      const usd = usage.cost?.usd ?? null
+      await update($, reading, saved => {
+        const r = { ...initial, ...saved }
+        // Start (or restart, after an older version) the measured stretch here: weights so far
+        // were counted against an unknown share of the cost, so they are dropped.
+        if (usd !== null && r.usdBaseline === null) return { ...r, sessionUsd: usd, usdBaseline: usd, weightedAll: 0 }
+        return { ...r, sessionUsd: usd }
+      })
       const r = await readReading($)
       $.ui.status(statusText(r, now))
 
@@ -290,7 +303,7 @@ export const register: Register = on => {
 
         {(() => {
           const c = cacheCosts(r)
-          if (!c) return <Text dimColor>{'\n'}Costs appear once the session has a cost reading.</Text>
+          if (!c) return <Text dimColor>{'\n'}COST: calibrating against /cost, a few more requests needed.</Text>
           const row = (label: string, value: string, hue: string, note?: string) => (
             <Text key={label}>
               <Text dimColor>{label.padEnd(18)}</Text>

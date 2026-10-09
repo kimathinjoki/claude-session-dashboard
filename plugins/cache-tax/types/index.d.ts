@@ -17,6 +17,9 @@ export type CacheReading = {
   // Every request's tokens, weighted by price ratio and model, for pricing a token from /cost.
   weightedAll: number
   sessionUsd: number | null
+  // The session cost when weighting began: a token is priced from the cost added since, over
+  // the requests weighed since, so both cover the same stretch of the session.
+  usdBaseline: number | null
   mainModel: string
 }
 
