@@ -141,21 +141,22 @@ export const overlaps = (peers: Peer[], now: number) => {
   return [...byPath.entries()].filter(([, names]) => names.length > 1).map(([path, names]) => ({ path, names }))
 }
 
-// A badge per session: a glyph and a hue, picked from its id so a session keeps its badge, and
+// A badge per session: a crab and a hue, picked from its id so a session keeps its badge, and
 // never shared by two live sessions (a clash moves the later one to the next free badge).
+// Little Claude crabs (Clawd, as the Claude Code banner draws him), each pose with its own colour.
 export const BADGES = [
-  { glyph: '◆', hue: '#f472b6' },
-  { glyph: '▲', hue: '#fb923c' },
-  { glyph: '■', hue: '#22d3ee' },
-  { glyph: '✦', hue: '#a78bfa' },
-  { glyph: '⬢', hue: '#34d399' },
-  { glyph: '◉', hue: '#38bdf8' },
-  { glyph: '✿', hue: '#e879f9' },
-  { glyph: '⬟', hue: '#f87171' },
-  { glyph: '♣', hue: '#4ade80' },
-  { glyph: '⬣', hue: '#fb7185' },
-  { glyph: '❖', hue: '#818cf8' },
-  { glyph: '✚', hue: '#2dd4bf' },
+  { glyph: '▐▛█▜▌', hue: '#f97316' },
+  { glyph: '▐▙█▟▌', hue: '#22d3ee' },
+  { glyph: '▝▜█▛▘', hue: '#f472b6' },
+  { glyph: '▗▟█▙▖', hue: '#a78bfa' },
+  { glyph: '▐▀█▀▌', hue: '#34d399' },
+  { glyph: '▐▄█▄▌', hue: '#38bdf8' },
+  { glyph: '▛▜█▛▜', hue: '#e879f9' },
+  { glyph: '▙▟█▙▟', hue: '#f87171' },
+  { glyph: '▝▛█▜▘', hue: '#4ade80' },
+  { glyph: '▗▙█▟▖', hue: '#fb7185' },
+  { glyph: '▐▛▀▜▌', hue: '#818cf8' },
+  { glyph: '▐▙▄▟▌', hue: '#2dd4bf' },
 ] as const
 
 const hash = (text: string) => [...text].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) >>> 0, 7)

@@ -36,7 +36,10 @@ const PROTOCOL = {
     'another live session edited recently, and a broad git command (add -A, commit -a, reset --hard, checkout, switch, stash, ' +
     'rebase, merge, pull) in a repository another session is working in, and its refusal names the session. When that happens, ' +
     'message that session with SendMessage before going on, commit only your own files with `git commit -- <paths>`, and never ' +
-    'switch branches in a shared working tree. Repeating the same call after agreeing, or on the user\'s say-so, is allowed.',
+    'switch branches in a shared working tree. Repeating the same call after agreeing, or on the user\'s say-so, is allowed. ' +
+    'Early in your first turn, and again if your task changes, call the set_session_label tool (Session Link) with a short label ' +
+    'naming what this session is doing, under 40 characters, with the letter or name the user gave the session if any ' +
+    '(for example "A: finish UA sub-project 1"), so the other sessions and the user can tell the sessions apart.',
 }
 
 // Module state: rebuilt on reload from this session's own beacon file.
@@ -154,9 +157,9 @@ async function refresh($: EngineInterface) {
         ...m,
         fromLabel: labelOfName.get(m.from) ?? null,
         toLabel: labelOfName.get(m.to) ?? null,
-        fromGlyph: badgeOfName.get(m.from)?.glyph ?? '●',
+        fromGlyph: badgeOfName.get(m.from)?.glyph ?? '▐▛█▜▌',
         fromHue: badgeOfName.get(m.from)?.hue ?? '#94a3b8',
-        toGlyph: badgeOfName.get(m.to)?.glyph ?? '●',
+        toGlyph: badgeOfName.get(m.to)?.glyph ?? '▐▛█▜▌',
         toHue: badgeOfName.get(m.to)?.hue ?? '#94a3b8',
       })),
   }
@@ -216,9 +219,44 @@ export const register: Register = on => {
       received: saved?.received ?? [],
     }
     await $.command.register({ name: 'link', description: 'Open Session Link: live sessions, their messages and overlaps. /link name <label> labels this session; /link release clears your file claims' })
+    await $.tool.register({
+      name: 'set_session_label',
+      description:
+        'Labels this Claude session in Session Link, the panel that shows every live session on this machine. Call it early in your ' +
+        'first turn with a short label for what this session is doing (under 40 characters), and again if the task changes.',
+      inputSchema: {
+        type: 'object',
+        properties: { label: { type: 'string', description: 'Short label, for example "A: finish UA sub-project 1"' } },
+        required: ['label'],
+      },
+      isDeferred: false,
+    })
     await refresh($)
     $.clock.every(REFRESH_MS, () => void refresh($))
     void $.ui.open({ id: PANE, title: 'Link' })
+    return next(e)
+  })
+
+  on('tool.call', { tool: 'mcp__session-link__set_session_label' }, async ($, e) => {
+    const label = cleanLabel(String((e as any).label ?? ''))
+    if (!me) return { result: 'Session Link is still starting; try again in a moment.' }
+    if (!label) return { result: 'Give a label of a few words, for example "A: finish UA sub-project 1".' }
+    me.label = label
+    await saveBeacon($)
+    await refresh($)
+    return { result: `This session is now labelled "${label}" in Session Link.` }
+  })
+
+  // Until the model labels itself, the first thing the user asked stands in, so no session is nameless.
+  on('prompt.submit', async ($, e, next) => {
+    if (me && !me.label && (!(e as any).origin || (e as any).origin.kind === 'composer')) {
+      const words = String((e as any).text ?? '').replace(/\s+/g, ' ').trim().split(' ').slice(0, 6).join(' ')
+      const label = cleanLabel(words)
+      if (label && !label.startsWith('/')) {
+        me.label = label
+        void saveBeacon($).then(() => refresh($))
+      }
+    }
     return next(e)
   })
 
@@ -338,7 +376,7 @@ export const register: Register = on => {
           </Box>
         ))}
         {others.length === 0 && sessions.length > 0 && <Text dimColor>No other session is running. Nothing to coordinate.</Text>}
-        {sessions.some(s => s.isSelf && !s.label) && <Text dimColor>Label this session: /link name A: finish UA 1</Text>}
+        {sessions.some(s => s.isSelf && !s.label) && <Text dimColor>This session labels itself on its first prompt; /link name changes it.</Text>}
 
         <Rule title="⚠ OVERLAPS" hue="#f97316" right="files two sessions both edited" />
         {(data?.overlaps ?? []).length === 0 && <Text color="#22c55e">✓ No file edited by two sessions.</Text>}
