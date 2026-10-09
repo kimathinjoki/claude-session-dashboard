@@ -3,7 +3,7 @@ import type { EngineInterface, ModelUsage, Register } from 'claude-code'
 
 import type { Ledger, SpendEntry } from '../types'
 
-const initial: Ledger = { entries: [], totalUsd: 0, samples: [], budgetUsd: null, warned: [], limits: [], planBudgetPercent: null, limitSamples: [] }
+const initial: Ledger = { entries: [], totalUsd: 0, samples: [], budgetUsd: null, warned: [], limits: [], planBudgetPercent: null, limitSamples: [], expanded: false }
 const ledger = atom({ plugin: 'spend-ledger', key: 'ledger' } as const, initial)
 
 const PANE = 'spend'
@@ -227,7 +227,10 @@ export const register: Register = on => {
     const burn = burnPerHour(l.samples, now)
     const spentTracked = l.entries.reduce((sum, entry) => sum + entry.usd, 0)
     const ranked = [...l.entries].sort((a, b) => b.usd - a.usd)
-    const top = ranked.slice(0, SHOWN)
+    const top = l.expanded ? ranked : ranked.slice(0, SHOWN)
+    const hidden = ranked.slice(top.length)
+    const subtotal = (kind: string) => l.entries.filter(entry => entry.kind === kind).reduce((sum, entry) => sum + entry.usd, 0)
+    const count = (kind: string) => l.entries.filter(entry => entry.kind === kind).length
     const biggest = ranked[0]?.usd ?? 0
 
     const byActivity = new Map<string, { usd: number; hue: string }>()
@@ -330,9 +333,47 @@ export const register: Register = on => {
                 </Text>
               )
             })}
-            {ranked.length > SHOWN && (
-              <Text dimColor>  + {ranked.length - SHOWN} more, {usd(ranked.slice(SHOWN).reduce((s, x) => s + x.usd, 0))}</Text>
+            {hidden.length > 0 && (
+              <Text dimColor>  + {hidden.length} more, {usd(hidden.reduce((sum, x) => sum + x.usd, 0))}</Text>
             )}
+            {ranked.length > SHOWN && (
+              <Box marginTop={1}>
+                <Button
+                  key="expand"
+                  hotkey="a"
+                  label={l.expanded ? `Show top ${SHOWN}` : `Show all ${ranked.length}`}
+                  onPress={() => void update($, ledger, current => ({ ...initial, ...current, expanded: !current.expanded }))}
+                />
+              </Box>
+            )}
+
+            <Box flexDirection="column" marginTop={1}>
+              <Text bold dimColor>TOTAL</Text>
+              <Text>
+                <Text color="#93c5fd">❯ </Text>
+                <Text dimColor>{`your prompts (${count('prompt')})`.padEnd(22)}</Text>
+                <Text bold>{usd(subtotal('prompt')).padStart(7)}</Text>
+              </Text>
+              <Text>
+                <Text color="#fb923c">◆ </Text>
+                <Text dimColor>{`sub-agents (${count('agent')})`.padEnd(22)}</Text>
+                <Text bold>{usd(subtotal('agent')).padStart(7)}</Text>
+              </Text>
+              {count('helpers') > 0 && (
+                <Text>
+                  <Text color="#64748b">⚙ </Text>
+                  <Text dimColor>{'engine helpers'.padEnd(22)}</Text>
+                  <Text bold>{usd(subtotal('helpers')).padStart(7)}</Text>
+                </Text>
+              )}
+              <Text dimColor>{'─'.repeat(Math.min(width, 33))}</Text>
+              <Text>
+                <Text>  </Text>
+                <Text bold>{'session total'.padEnd(22)}</Text>
+                <Text bold color="#4ade80">{usd(l.totalUsd).padStart(7)}</Text>
+                {onPlan ? <Text dimColor>  API-price value</Text> : null}
+              </Text>
+            </Box>
 
             <Box flexDirection="column" marginTop={1}>
               <Text bold dimColor>BY ACTIVITY</Text>

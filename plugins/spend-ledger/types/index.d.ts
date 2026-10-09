@@ -19,6 +19,8 @@ export type Ledger = {
   // A plan budget: warn when the five-hour window passes this share (0 to 100).
   planBudgetPercent: number | null
   limitSamples: SpendSample[]
+  // The WHERE IT WENT list shows every row instead of the top ones.
+  expanded: boolean
   totalUsd: number
   samples: SpendSample[]
   budgetUsd: number | null
