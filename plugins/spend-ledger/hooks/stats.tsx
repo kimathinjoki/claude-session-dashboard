@@ -410,13 +410,35 @@ export const parseClaudeStats = (text: string): ClaudeStats | null => {
   }
 }
 
-const MODEL_FACTOR: Array<[RegExp, number]> = [[/opus/i, 5], [/sonnet/i, 3], [/haiku/i, 1], [/fable/i, 5]]
-const factorOf = (model: string) => MODEL_FACTOR.find(([test]) => test.test(model))?.[1] ?? 3
+// Anthropic list prices per million tokens: input, output, cache read. A cache write is 1.25x
+// input (the 5-minute cache, Claude Code's default before promptCacheTtl). Most specific first.
+// Organisation-negotiated rates are not known here, so these are list-price figures.
+export const PRICES: Array<[RegExp, { input: number; output: number; cacheRead: number }]> = [
+  [/fable-5-1|mythos-5-1/, { input: 10, output: 50, cacheRead: 0.25 }],
+  [/fable-5|mythos-5/, { input: 10, output: 50, cacheRead: 1 }],
+  [/opus-5-5/, { input: 4, output: 20, cacheRead: 0.2 }],
+  [/opus-5|opus-4-[5-8]/, { input: 5, output: 25, cacheRead: 0.5 }],
+  [/opus-4/, { input: 15, output: 75, cacheRead: 1.5 }],
+  [/sonnet-5/, { input: 2, output: 10, cacheRead: 0.2 }],
+  [/sonnet-4|sonnet-3/, { input: 3, output: 15, cacheRead: 0.3 }],
+  [/haiku-5/, { input: 0.1, output: 0.5, cacheRead: 0.01 }],
+  [/haiku-4/, { input: 1, output: 5, cacheRead: 0.1 }],
+  [/haiku-3/, { input: 0.8, output: 4, cacheRead: 0.08 }],
+]
+export const priceOf = (model: string) => PRICES.find(([test]) => test.test(model))?.[1] ?? null
+
+// Dollars for a split of tokens at a model's list price; null for a model with no known price.
+export const listCost = (model: string, t: { input: number; output: number; cacheRead: number; cacheWrite: number }) => {
+  const p = priceOf(model)
+  if (!p) return null
+  const fresh = Math.max(0, t.input - t.cacheRead - t.cacheWrite)
+  return (fresh * p.input + t.output * p.output + t.cacheRead * p.cacheRead + t.cacheWrite * p.input * 1.25) / 1_000_000
+}
 
 // A past day from Claude Code's file, split into input, output and cache by that model's all-time
-// ratios (the file keeps only a daily total per model) and priced at `unitPrice` per weighted
-// unit, the rate measured in this session. Marked estimated.
-export const dayFromClaude = (day: ClaudeStats['days'][string], models: ClaudeStats['models'], unitPrice: number | null): DayStat => {
+// ratios (the file keeps only a daily total per model) and priced at that model's list price.
+// Marked estimated.
+export const dayFromClaude = (day: ClaudeStats['days'][string], models: ClaudeStats['models']): DayStat => {
   const out: DayStat = { ...emptyDay(), sessions: day.sessions, requests: day.messages, estimated: true }
   for (const [id, total] of Object.entries(day.tokensByModel)) {
     const m = models[id]
@@ -426,8 +448,7 @@ export const dayFromClaude = (day: ClaudeStats['days'][string], models: ClaudeSt
     const output = m ? share(m.output) : 0
     const cacheRead = m ? share(m.cacheRead) : 0
     const cacheWrite = m ? share(m.cacheWrite) : 0
-    const weight = ((input - cacheRead - cacheWrite) + 1.25 * cacheWrite + 0.1 * cacheRead + 5 * output) * factorOf(id)
-    const usd = unitPrice ? weight * unitPrice : 0
+    const usd = listCost(id, { input, output, cacheRead, cacheWrite }) ?? 0
     out.models[id] = { usd, requests: 0, input, output, cacheRead, cacheWrite }
     out.input += input
     out.output += output
@@ -439,11 +460,11 @@ export const dayFromClaude = (day: ClaudeStats['days'][string], models: ClaudeSt
 }
 
 // Our own days win (they are exact); every other day comes from Claude Code's file.
-export const mergeHistory = (history: History, claude: ClaudeStats | null, unitPrice: number | null): History => {
+export const mergeHistory = (history: History, claude: ClaudeStats | null): History => {
   if (!claude) return history
   const days = { ...history.days }
   for (const [key, day] of Object.entries(claude.days)) {
-    if (!days[key]) days[key] = dayFromClaude(day, claude.models, unitPrice)
+    if (!days[key]) days[key] = dayFromClaude(day, claude.models)
   }
   return {
     ...history,

@@ -126,7 +126,7 @@ test("Claude Code's own history fills the past days, estimated", async () => {
   const claude = parseClaudeStats(file)!
   expect(claude.totalSessions).toBe(223)
   expect(claude.hourCounts[14]).toBe(7)
-  const merged = mergeHistory(emptyHistory(), claude, 0.000001)
+  const merged = mergeHistory(emptyHistory(), claude)
   const day = merged.days['2026-10-07']!
   expect(day.estimated).toBe(true)
   expect(Math.round(day.output)).toBe(100)
@@ -136,4 +136,14 @@ test("Claude Code's own history fills the past days, estimated", async () => {
   expect(merged.sessions).toBe(223)
   expect(claude.recordsCost).toBe(false)
   expect(parseClaudeStats('not json')).toBeNull()
+})
+
+
+import { listCost } from './stats'
+
+test("past days are priced at each model's list price", async () => {
+  // Opus 5.5: 1M cache reads at $0.20, 1M output at $20.
+  expect(Math.round(listCost('claude-opus-5-5', { input: 1_000_000, output: 1_000_000, cacheRead: 1_000_000, cacheWrite: 0 })! * 100)).toBe(2020)
+  expect(listCost('claude-sonnet-5-5', { input: 2_000_000, output: 0, cacheRead: 0, cacheWrite: 0 })).toBe(4)
+  expect(listCost('some-unknown-model', { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 })).toBeNull()
 })

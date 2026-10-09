@@ -458,14 +458,10 @@ export const register: Register = on => {
       const view: StatsView = l.statsView ?? 'overview'
       const range: StatsRange = l.statsRange ?? 'session'
       const chartStyle: StatsChart = l.statsChart ?? 'line'
-      // A weighted unit's price from this session's measured spend; null until there is enough.
-      const unitPrice = l.usdBaseline != null && (l.weightedSince ?? 0) > 200_000 && l.totalUsd > l.usdBaseline
-        ? (l.totalUsd - l.usdBaseline) / l.weightedSince
-        : null
-      const history = mergeHistory(l.history ?? emptyHistory(), l.claudeStats ?? null, unitPrice)
+      const history = mergeHistory(l.history ?? emptyHistory(), l.claudeStats ?? null)
       // On a subscription the dollar figures are what the tokens would cost at API prices, not a
       // charge: say so wherever a dollar figure is shown.
-      const asValue = onPlan || (l.claudeStats ? !l.claudeStats.recordsCost : false)
+      const asValue = onPlan
       const costWord = asValue ? 'API value' : 'Cost'
       const modelIds = Object.keys(l.models ?? {})
       const model = l.statsModel && modelIds.includes(l.statsModel) ? l.statsModel : null
@@ -559,7 +555,7 @@ export const register: Register = on => {
               </Text>
               <Text color="#93c5fd">{funFact(tiles.total.input + tiles.total.output)}</Text>
               {l.claudeStats && range !== 'session' && (
-                <Text dimColor>past days from Claude Code's own history; their split and cost are estimated</Text>
+                <Text dimColor>past days from Claude Code's own history, priced at list prices; their in/out split is estimated</Text>
               )}
             </Box>
           </Box>
