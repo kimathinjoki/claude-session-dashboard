@@ -40,3 +40,12 @@ test('plan windows read as a share and a reset time', async () => {
   expect(usageHue(70)).toBe('#f97316')
   expect(usageHue(90)).toBe('#ef4444')
 })
+
+import { modelHue, modelName } from './register'
+
+test('models read short and keep their family colour', async () => {
+  expect(modelName('claude-opus-5-5')).toBe('opus-5-5')
+  expect(modelName('claude-sonnet-5-5-20261001')).toBe('sonnet-5-5')
+  expect(modelHue('claude-opus-5-5')).toBe('#c084fc')
+  expect(modelHue('claude-haiku-5-5')).toBe('#34d399')
+})

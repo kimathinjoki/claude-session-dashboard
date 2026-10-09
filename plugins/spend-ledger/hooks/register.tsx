@@ -3,7 +3,7 @@ import type { EngineInterface, ModelUsage, Register } from 'claude-code'
 
 import type { Ledger, SpendEntry } from '../types'
 
-const initial: Ledger = { entries: [], totalUsd: 0, samples: [], budgetUsd: null, warned: [], limits: [], planBudgetPercent: null, limitSamples: [], expanded: false }
+const initial: Ledger = { entries: [], totalUsd: 0, samples: [], budgetUsd: null, warned: [], limits: [], planBudgetPercent: null, limitSamples: [], expanded: false, models: {} }
 const ledger = atom({ plugin: 'spend-ledger', key: 'ledger' } as const, initial)
 
 const PANE = 'spend'
@@ -29,6 +29,11 @@ export const apportion = (delta: number, pending: Record<string, number>) => {
   if (total <= 0) return { [HELPERS]: delta }
   return Object.fromEntries(Object.entries(pending).map(([id, w]) => [id, (delta * w) / total]))
 }
+
+export const modelName = (id: string) => id.replace(/^claude-/, '').replace(/-\d{8}$/, '')
+const MODEL_HUES: Array<[RegExp, string]> = [[/opus/i, '#c084fc'], [/sonnet/i, '#60a5fa'], [/haiku/i, '#34d399'], [/fable/i, '#f9a8d4']]
+export const modelHue = (id: string) => MODEL_HUES.find(([test]) => test.test(id))?.[1] ?? '#cbd5e1'
+const shortTokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`)
 
 export const usd = (n: number) => (n >= 100 ? `$${n.toFixed(0)}` : n >= 1 ? `$${n.toFixed(2)}` : `${Math.round(n * 100)}¢`)
 
@@ -61,6 +66,8 @@ const bar = (share: number, width: number) => {
 
 // Request weights since the last poll, by entry id. Module state: a reload starts it over.
 let pending: Record<string, number> = {}
+// The same weights keyed by model, so each poll's increase also splits across models.
+let pendingByModel: Record<string, number> = {}
 const promptText = new Map<string, string>()
 
 // State saved by an earlier version may lack fields added since; fill them in.
@@ -144,7 +151,9 @@ export const register: Register = on => {
       const l = await readLedger($)
       const delta = total - l.totalUsd
       const shares = delta > 0.000001 ? apportion(delta, pending) : {}
+      const modelShares = delta > 0.000001 && Object.keys(pendingByModel).length > 0 ? apportion(delta, pendingByModel) : {}
       pending = {}
+      pendingByModel = {}
 
       if (shares[HELPERS] !== undefined) {
         await ensureEntry($, { id: HELPERS, kind: 'helpers', label: 'Engine helpers (titles, compaction, forks)', model: '', usd: 0, steps: 0, startedAt: now })
@@ -154,6 +163,9 @@ export const register: Register = on => {
         ...current,
         totalUsd: total,
         entries: current.entries.map(entry => (shares[entry.id] ? { ...entry, usd: entry.usd + shares[entry.id]! } : entry)),
+        models: Object.fromEntries(
+          Object.entries(current.models ?? {}).map(([id, m]) => [id, { ...m, usd: m.usd + (modelShares[id] ?? 0) }]),
+        ),
         samples: [...current.samples, { at: now, usd: total }].filter(s => now - s.at <= BURN_WINDOW_MS + POLL_MS),
       }))
       await warnOnBudget($)
@@ -184,7 +196,22 @@ export const register: Register = on => {
       const text = (promptText.get(e.turnId) ?? '').replace(/\s+/g, ' ').trim()
       await ensureEntry($, { id, kind: 'prompt', label: text ? text.slice(0, 60) : 'Follow-up (agent results, wake-ups)', model, usd: 0, steps: 0, startedAt: await $.clock.now() })
     }
-    pending[id] = (pending[id] ?? 0) + weight(result.usage, model)
+    const w = weight(result.usage, model)
+    pending[id] = (pending[id] ?? 0) + w
+    if (model) pendingByModel[model] = (pendingByModel[model] ?? 0) + w
+    const u = result.usage
+    await update($, ledger, current => {
+      const models = { ...(current.models ?? {}) }
+      const m = models[model] ?? { usd: 0, steps: 0, inputTokens: 0, cacheReadTokens: 0, outputTokens: 0 }
+      models[model] = {
+        ...m,
+        steps: m.steps + 1,
+        inputTokens: m.inputTokens + u.input_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens,
+        cacheReadTokens: m.cacheReadTokens + u.cache_read_input_tokens,
+        outputTokens: m.outputTokens + u.output_tokens,
+      }
+      return { ...initial, ...current, models }
+    })
     await update($, ledger, l => ({ ...initial, ...l, entries: l.entries.map(entry => (entry.id === id ? { ...entry, steps: entry.steps + 1, model } : entry)) }))
     return result
   })
@@ -374,6 +401,33 @@ export const register: Register = on => {
                 {onPlan ? <Text dimColor>  API-price value</Text> : null}
               </Text>
             </Box>
+
+            {Object.keys(l.models ?? {}).length > 0 && (() => {
+              const models = Object.entries(l.models).sort((a, b) => b[1].usd - a[1].usd)
+              const modelTotal = models.reduce((sum, [, m]) => sum + m.usd, 0)
+              return (
+                <Box flexDirection="column" marginTop={1}>
+                  <Text bold dimColor>BY MODEL</Text>
+                  {models.map(([id, m]) => {
+                    const share = modelTotal > 0 ? m.usd / modelTotal : 0
+                    const hit = m.inputTokens > 0 ? m.cacheReadTokens / m.inputTokens : 0
+                    return (
+                      <Box key={id} flexDirection="column">
+                        <Text wrap="truncate-end">
+                          <Text color={modelHue(id)} bold>● {modelName(id).padEnd(16)}</Text>
+                          <Text color={modelHue(id)}>{bar(share, Math.max(6, Math.min(14, width - 36)))}</Text>
+                          <Text bold> {usd(m.usd).padStart(6)}</Text>
+                          <Text dimColor> {Math.round(share * 100)}%</Text>
+                        </Text>
+                        <Text dimColor wrap="truncate-end">
+                          {'  '}{m.steps} requests · in {shortTokens(m.inputTokens)} ({Math.round(hit * 100)}% cached) · out {shortTokens(m.outputTokens)}
+                        </Text>
+                      </Box>
+                    )
+                  })}
+                </Box>
+              )
+            })()}
 
             <Box flexDirection="column" marginTop={1}>
               <Text bold dimColor>BY ACTIVITY</Text>

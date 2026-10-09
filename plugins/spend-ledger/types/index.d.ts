@@ -10,6 +10,14 @@ export type SpendEntry = {
 
 export type SpendSample = { at: number; usd: number }
 
+export type ModelSpend = {
+  usd: number
+  steps: number
+  inputTokens: number
+  cacheReadTokens: number
+  outputTokens: number
+}
+
 export type PlanWindow = { kind: string; percentUsed: number; resetsAt?: string }
 
 export type Ledger = {
@@ -21,6 +29,8 @@ export type Ledger = {
   limitSamples: SpendSample[]
   // The WHERE IT WENT list shows every row instead of the top ones.
   expanded: boolean
+  // By model id: cost (estimated, as the rows are) and what it processed.
+  models: Record<string, ModelSpend>
   totalUsd: number
   samples: SpendSample[]
   budgetUsd: number | null
