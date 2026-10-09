@@ -736,23 +736,21 @@ export const register: Register = on => {
           </Box>
         )}
         <Box flexDirection="column" marginTop={1}>
-          <Text bold dimColor>BUDGET</Text>
-          <Box gap={1} flexWrap="wrap">
-            {onPlan ? (
-              <>
-                <Button key="p50" hotkey="1" label="Warn at 50%" onPress={() => void $.command.run({ command: 'spend', args: 'budget 50%' })} />
-                <Button key="p75" hotkey="2" label="75%" onPress={() => void $.command.run({ command: 'spend', args: 'budget 75%' })} />
-                <Button key="p90" hotkey="3" label="90%" onPress={() => void $.command.run({ command: 'spend', args: 'budget 90%' })} />
-              </>
-            ) : (
-              <>
-                <Button key="b25" hotkey="1" label="$25" onPress={() => void $.command.run({ command: 'spend', args: 'budget 25' })} />
-                <Button key="b50" hotkey="2" label="$50" onPress={() => void $.command.run({ command: 'spend', args: 'budget 50' })} />
-                <Button key="b100" hotkey="3" label="$100" onPress={() => void $.command.run({ command: 'spend', args: 'budget 100' })} />
-                <Button key="b250" hotkey="4" label="$250" onPress={() => void $.command.run({ command: 'spend', args: 'budget 250' })} />
-              </>
-            )}
-            {(l.budgetUsd !== null || l.planBudgetPercent !== null) && <Button key="boff" hotkey="0" label="Clear" onPress={() => void $.command.run({ command: 'spend', args: 'budget off' })} />}
+          <Text>
+            <Text bold dimColor>BUDGET  </Text>
+            {l.planBudgetPercent !== null && <Text color="#fb923c">warn at {l.planBudgetPercent}% of the 5-hour window</Text>}
+            {l.budgetUsd !== null && <Text color="#fb923c">{usd(l.budgetUsd)} this session</Text>}
+            {l.planBudgetPercent === null && l.budgetUsd === null && <Text dimColor>none set</Text>}
+          </Text>
+          <Box flexDirection="row" columnGap={1} flexWrap="wrap">
+            {(onPlan
+              ? [['p50', '1', 'Warn at 50%', 'budget 50%'], ['p75', '2', '75%', 'budget 75%'], ['p90', '3', '90%', 'budget 90%']]
+              : [['b25', '1', '$25', 'budget 25'], ['b50', '2', '$50', 'budget 50'], ['b100', '3', '$100', 'budget 100'], ['b250', '4', '$250', 'budget 250']]
+            )
+              .concat(l.budgetUsd !== null || l.planBudgetPercent !== null ? [['boff', '0', 'Clear', 'budget off']] : [])
+              .map(([key, hotkey, label, args]) => (
+                <Button key={key!} hotkey={hotkey!} label={label!} onPress={() => void $.command.run({ command: 'spend', args: args! })} />
+              ))}
           </Box>
         </Box>
       </Box>
