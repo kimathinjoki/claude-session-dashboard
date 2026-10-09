@@ -210,6 +210,55 @@ export const dotChart = (values: number[], width: number, height: number, max = 
   return grid.map(r => r.map(bits => String.fromCharCode(0x2800 + bits)).join(''))
 }
 
+// Which point each column of a chart shows, so a column can be coloured by that point's change.
+export const columnPoints = (style: StatsChart, count: number, width: number) => {
+  if (count === 0) return Array(width).fill(-1)
+  if (style === 'bars') {
+    const n = count > width ? Math.floor(width / 2) : count
+    const slot = Math.max(1, Math.floor(width / n))
+    return Array.from({ length: width }, (_, x) => Math.min(count - 1, Math.floor((Math.floor(x / slot) * count) / n)))
+  }
+  return Array.from({ length: width }, (_, x) => Math.min(count - 1, Math.floor((x * count) / width)))
+}
+
+export type Trend = 'up' | 'down' | 'flat'
+// A point's change from the last point that had data; a gap or the first point is flat.
+export const trendOf = (values: number[], i: number): Trend => {
+  const v = values[i]
+  if (v === undefined || !Number.isFinite(v)) return 'flat'
+  for (let j = i - 1; j >= 0; j -= 1) {
+    const prev = values[j]!
+    if (!Number.isFinite(prev)) continue
+    const delta = v - prev
+    const scale = Math.max(Math.abs(prev), Math.abs(v), 1e-9)
+    return Math.abs(delta) / scale < 0.02 ? 'flat' : delta > 0 ? 'up' : 'down'
+  }
+  return 'flat'
+}
+
+// Rising and falling colours per view: more spend is warm and less is cool; for the cache, more
+// read from cache is good (green) and less is a slip (deep orange).
+export const TREND_HUE: Record<StatsView, { up: string; down: string }> = {
+  overview: { up: '#fb923c', down: '#60a5fa' },
+  tokens: { up: '#fb923c', down: '#60a5fa' },
+  cost: { up: '#fb923c', down: '#60a5fa' },
+  inout: { up: '#fb923c', down: '#60a5fa' },
+  cache: { up: '#22c55e', down: '#f97316' },
+}
+
+// A row split into runs of one colour, ready to draw as Text spans.
+export const colourRuns = (row: string, hues: string[]) => {
+  const runs: Array<{ text: string; hue: string }> = []
+  const chars = Array.from(row)
+  chars.forEach((ch, x) => {
+    const hue = hues[x] ?? hues[hues.length - 1] ?? ''
+    const last = runs[runs.length - 1]
+    if (last && last.hue === hue) last.text += ch
+    else runs.push({ text: ch, hue })
+  })
+  return runs
+}
+
 export const drawChart = (style: StatsChart, values: number[], width: number, height: number, max: number) =>
   style === 'area' ? areaChart(values, width, height, max)
     : style === 'bars' ? barChart(values, width, height, max)

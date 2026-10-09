@@ -95,3 +95,16 @@ test('chart styles: area fills, bars stand apart, dots stand alone', async () =>
   expect(dots[0]!.length).toBe(1)
   expect(dots[0]).not.toBe(String.fromCharCode(0x2800))
 })
+
+
+import { colourRuns, columnPoints, trendOf } from './stats'
+
+test('columns are coloured by how their point changed', async () => {
+  expect(trendOf([1, 2, 2, 1], 1)).toBe('up')
+  expect(trendOf([1, 2, 2, 1], 2)).toBe('flat')
+  expect(trendOf([1, 2, 2, 1], 3)).toBe('down')
+  expect(trendOf([1, Number.NaN, 3], 2)).toBe('up')
+  expect(columnPoints('area', 2, 4)).toEqual([0, 0, 1, 1])
+  expect(columnPoints('bars', 2, 6)).toEqual([0, 0, 0, 1, 1, 1])
+  expect(colourRuns('ab c', ['x', 'x', 'y', 'y'])).toEqual([{ text: 'ab', hue: 'x' }, { text: ' c', hue: 'y' }])
+})

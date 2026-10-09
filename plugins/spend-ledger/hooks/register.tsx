@@ -3,7 +3,7 @@ import type { EngineInterface, ModelUsage, Register } from 'claude-code'
 
 import type { Ledger, SpendBucket, SpendEntry, StatsChart, StatsRange, StatsView } from '../types'
 import {
-  CHARTS, CHART_HUE, CHART_LABEL, LEVEL_HUE, RANGES, RANGE_HUE, RANGE_LABEL, SHADES, TAB_GAP, VIEWS, VIEW_HUE, VIEW_LABEL, addToDay, compact, drawChart, dayKey, durationText,
+  CHARTS, CHART_HUE, CHART_LABEL, LEVEL_HUE, RANGES, RANGE_HUE, RANGE_LABEL, SHADES, TAB_GAP, VIEWS, VIEW_HUE, VIEW_LABEL, addToDay, colourRuns, columnPoints, compact, drawChart, trendOf, TREND_HUE, dayKey, durationText,
   emptyHistory, funFact, heatmap, pointsFor, seriesFor, tilesFor,
 } from './stats'
 
@@ -541,12 +541,25 @@ export const register: Register = on => {
               <Text bold>{VIEW_LABEL[view]} {range === 'session' ? 'per 5 minutes' : 'per day'}{model && range !== 'session' ? `, ${modelName(model)}` : ''}</Text>
               {series.map(s => {
                 const rows = drawChart(chartStyle, s.values, chartWidth - labelWidth, height, max)
+                // Each column takes the colour of its point's change: rising, falling or level.
+                const plotWidth = chartWidth - labelWidth
+                const trendHue = TREND_HUE[view]
+                const columnHues = columnPoints(chartStyle, s.values.length, plotWidth).map(i => {
+                  const t = i < 0 ? 'flat' : trendOf(s.values, i)
+                  return t === 'up' ? trendHue.up : t === 'down' ? trendHue.down : s.hue
+                })
                 return (
                   <Box key={`chart-${s.name}`} flexDirection="column">
                     {rows.map((row, i) => (
                       <Text key={`r-${s.name}-${i}`}>
                         <Text dimColor>{((i === 0 ? axis[0] : i === Math.floor(height / 3) ? axis[1] : i === Math.floor((2 * height) / 3) ? axis[2] : i === height - 1 ? axis[3] : '') ?? '').padStart(labelWidth - 1)} {i === 0 || i === height - 1 || i === Math.floor(height / 3) || i === Math.floor((2 * height) / 3) ? '┤' : '│'}</Text>
-                        <Text color={s.hue}>{row}</Text>
+                        {chartStyle === 'line' ? (
+                          <Text color={s.hue}>{row}</Text>
+                        ) : (
+                          colourRuns(row, columnHues).map((run, k) => (
+                            <Text key={`run-${s.name}-${i}-${k}`} color={run.hue}>{run.text}</Text>
+                          ))
+                        )}
                       </Text>
                     ))}
                   </Box>
@@ -571,6 +584,12 @@ export const register: Register = on => {
                 {series.map(s => (
                   <Text key={`lg-${s.name}`}><Text color={s.hue}>● </Text><Text dimColor>{s.name}  </Text></Text>
                 ))}
+                {chartStyle !== 'line' && (
+                  <Text>
+                    <Text color={TREND_HUE[view].up}>▲ </Text><Text dimColor>{view === 'cache' ? 'more from cache  ' : 'rising  '}</Text>
+                    <Text color={TREND_HUE[view].down}>▼ </Text><Text dimColor>{view === 'cache' ? 'less from cache' : 'falling'}</Text>
+                  </Text>
+                )}
               </Text>
               {view === 'tokens' && Object.keys(l.models ?? {}).length > 0 && (
                 <Box flexDirection="column" marginTop={1}>
