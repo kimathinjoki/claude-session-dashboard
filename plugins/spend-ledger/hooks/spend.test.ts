@@ -110,3 +110,29 @@ test('columns are coloured by how their point changed', async () => {
   expect(columnPoints('bars', 2, 6)).toEqual([0, 0, 0, 1, 1, 1])
   expect(colourRuns('ab c', ['x', 'x', 'y', 'y'])).toEqual([{ text: 'ab', hue: 'x' }, { text: ' c', hue: 'y' }])
 })
+
+
+import { mergeHistory, parseClaudeStats } from './stats'
+
+test("Claude Code's own history fills the past days, estimated", async () => {
+  const file = JSON.stringify({
+    lastComputedDate: '2026-10-08', totalSessions: 223, firstSessionDate: '2025-12-26T19:53:15.081Z',
+    longestSession: { duration: 276909690 },
+    dailyActivity: [{ date: '2026-10-07', messageCount: 1237, sessionCount: 1, toolCallCount: 240 }],
+    dailyModelTokens: [{ date: '2026-10-07', tokensByModel: { 'claude-opus-5-5': 1000 } }],
+    modelUsage: { 'claude-opus-5-5': { inputTokens: 0, outputTokens: 100, cacheReadInputTokens: 800, cacheCreationInputTokens: 100 } },
+    hourCounts: { '9': 4, '14': 7 },
+  })
+  const claude = parseClaudeStats(file)!
+  expect(claude.totalSessions).toBe(223)
+  expect(claude.hourCounts[14]).toBe(7)
+  const merged = mergeHistory(emptyHistory(), claude, 0.000001)
+  const day = merged.days['2026-10-07']!
+  expect(day.estimated).toBe(true)
+  expect(Math.round(day.output)).toBe(100)
+  expect(Math.round(day.cacheRead)).toBe(800)
+  expect(day.requests).toBe(1237)
+  expect(day.usd).toBeGreaterThan(0)
+  expect(merged.sessions).toBe(223)
+  expect(parseClaudeStats('not json')).toBeNull()
+})

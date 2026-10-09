@@ -3,11 +3,11 @@ import type { EngineInterface, ModelUsage, Register } from 'claude-code'
 
 import type { Ledger, SpendBucket, SpendEntry, StatsChart, StatsRange, StatsView } from '../types'
 import {
-  CHARTS, CHART_HUE, CHART_LABEL, LEVEL_HUE, RANGES, RANGE_HUE, RANGE_LABEL, SHADES, TAB_GAP, VIEWS, VIEW_HUE, VIEW_LABEL, addToDay, colourRuns, columnPoints, compact, drawChart, trendOf, TREND_HUE, dayKey, durationText,
+  CHARTS, CHART_HUE, CHART_LABEL, LEVEL_HUE, RANGES, RANGE_HUE, RANGE_LABEL, SHADES, TAB_GAP, VIEWS, VIEW_HUE, VIEW_LABEL, addToDay, barChart, mergeHistory, parseClaudeStats, colourRuns, columnPoints, compact, drawChart, trendOf, TREND_HUE, dayKey, durationText,
   emptyHistory, funFact, heatmap, pointsFor, seriesFor, tilesFor,
 } from './stats'
 
-const initial: Ledger = { entries: [], totalUsd: 0, samples: [], budgetUsd: null, warned: [], limits: [], planBudgetPercent: null, limitSamples: [], expanded: false, models: {}, buckets: [], history: emptyHistory(), statsView: 'overview', statsRange: 'session', statsModel: null, statsChart: 'line', sessionStartedAt: null }
+const initial: Ledger = { entries: [], totalUsd: 0, samples: [], budgetUsd: null, warned: [], limits: [], planBudgetPercent: null, limitSamples: [], expanded: false, models: {}, buckets: [], history: emptyHistory(), statsView: 'overview', statsRange: 'session', statsModel: null, statsChart: 'line', sessionStartedAt: null, claudeStats: null, usdBaseline: null, weightedSince: 0 }
 const ledger = atom({ plugin: 'spend-ledger', key: 'ledger' } as const, initial)
 
 const PANE = 'spend'
@@ -191,6 +191,20 @@ export const register: Register = on => {
     await $.command.register({ name: 'spend', description: 'Spend panel: /spend opens it; /spend budget 50 (dollars, API key) or /spend budget 80% (share of the 5-hour plan window); /spend budget off clears it' })
     void $.ui.open({ id: PANE, title: 'Spend' })
 
+    // Claude Code's own usage history, the file /usage reads: the 7-day, 30-day and all-time views.
+    const loadClaudeStats = async () => {
+      try {
+        const home = await $.env.get('HOME')
+        if (!home) return
+        const parsed = parseClaudeStats(await $.fs.read(`${home}/.claude/stats-cache.json`))
+        if (parsed) await update($, ledger, l => ({ ...initial, ...l, claudeStats: parsed }))
+      } catch {
+        // No file yet (a new install) or unreadable: the charts use this mod's own days only.
+      }
+    }
+    await loadClaudeStats()
+    $.clock.every(10 * 60_000, () => void loadClaudeStats())
+
     $.clock.every(POLL_MS, async () => {
       const usage = await $.session.usage()
       const now = await $.clock.now()
@@ -211,6 +225,13 @@ export const register: Register = on => {
       }
       const l = await readLedger($)
       const delta = total - l.totalUsd
+      const weighedNow = Object.values(pending).reduce((sum, w) => sum + w, 0)
+      await update($, ledger, current => ({
+        ...initial,
+        ...current,
+        usdBaseline: current.usdBaseline ?? total,
+        weightedSince: current.usdBaseline == null ? 0 : (current.weightedSince ?? 0) + weighedNow,
+      }))
       const shares = delta > 0.000001 ? apportion(delta, pending) : {}
       const modelShares = delta > 0.000001 && Object.keys(pendingByModel).length > 0 ? apportion(delta, pendingByModel) : {}
       pending = {}
@@ -437,7 +458,11 @@ export const register: Register = on => {
       const view: StatsView = l.statsView ?? 'overview'
       const range: StatsRange = l.statsRange ?? 'session'
       const chartStyle: StatsChart = l.statsChart ?? 'line'
-      const history = l.history ?? emptyHistory()
+      // A weighted unit's price from this session's measured spend; null until there is enough.
+      const unitPrice = l.usdBaseline != null && (l.weightedSince ?? 0) > 200_000 && l.totalUsd > l.usdBaseline
+        ? (l.totalUsd - l.usdBaseline) / l.weightedSince
+        : null
+      const history = mergeHistory(l.history ?? emptyHistory(), l.claudeStats ?? null, unitPrice)
       const modelIds = Object.keys(l.models ?? {})
       const model = l.statsModel && modelIds.includes(l.statsModel) ? l.statsModel : null
       const chartWidth = Math.max(16, width - 10)
@@ -500,6 +525,18 @@ export const register: Register = on => {
                 <Text dimColor> More</Text>
               </Text>
             </Box>
+            {l.claudeStats && l.claudeStats.hourCounts.some(n => n > 0) && (() => {
+              const hours = l.claudeStats!.hourCounts
+              const rows = barChart(hours, Math.min(48, Math.max(24, width - 6)), 3, Math.max(...hours))
+              const busiest = hours.indexOf(Math.max(...hours))
+              return (
+                <Box flexDirection="column" marginTop={1}>
+                  <Text><Text bold dimColor>ACTIVE HOURS  </Text><Text dimColor>busiest </Text><Text bold color="#fdba74">{String(busiest).padStart(2, '0')}:00</Text></Text>
+                  {rows.map((row, i) => <Text key={`hr-${i}`} color="#fb923c">{'    '}{row}</Text>)}
+                  <Text dimColor>{'    '}{'00'.padEnd(Math.floor(rows[0]!.length / 2))}{'12'.padEnd(Math.ceil(rows[0]!.length / 2) - 2)}23</Text>
+                </Box>
+              )
+            })()}
             <Box flexDirection="column" marginTop={1}>
               {tile('Favorite model', tiles.favorite ? modelName(tiles.favorite) : '-', tiles.favorite ? modelHue(tiles.favorite) : '#94a3b8')}
               {tile('Total tokens', compact(tiles.total.input + tiles.total.output))}
@@ -517,6 +554,9 @@ export const register: Register = on => {
                 Input {compact(tiles.total.input - tiles.total.cacheRead - tiles.total.cacheWrite)} · Output {compact(tiles.total.output)} · Cache read {compact(tiles.total.cacheRead)} · Cache write {compact(tiles.total.cacheWrite)}
               </Text>
               <Text color="#93c5fd">{funFact(tiles.total.input + tiles.total.output)}</Text>
+              {l.claudeStats && range !== 'session' && (
+                <Text dimColor>past days from Claude Code's own history; their split and cost are estimated</Text>
+              )}
             </Box>
           </Box>
         )
@@ -577,7 +617,7 @@ export const register: Register = on => {
                   </Text>
                 )
               })()}
-              {range !== 'session' && points.filter(p => p.input + p.output > 0).length <= 1 && (
+              {range !== 'session' && !l.claudeStats && points.filter(p => p.input + p.output > 0).length <= 1 && (
                 <Text color="#93c5fd">› daily history started recently; This session shows today in 5-minute slices</Text>
               )}
               <Text>

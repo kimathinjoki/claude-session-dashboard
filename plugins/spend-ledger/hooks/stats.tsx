@@ -1,7 +1,7 @@
 // The STATS dashboard: pure helpers for the history the mod keeps across sessions, the series
 // each view charts, a braille line chart, a day heatmap and the stat tiles.
 
-import type { DayStat, History, SpendBucket, StatsChart, StatsRange, StatsView } from '../types'
+import type { ClaudeStats, DayStat, History, SpendBucket, StatsChart, StatsRange, StatsView } from '../types'
 
 export const VIEWS: StatsView[] = ['overview', 'tokens', 'cost', 'cache', 'inout']
 export const RANGES: StatsRange[] = ['session', '7d', '30d', 'all']
@@ -367,4 +367,88 @@ export const durationText = (ms: number) => {
   const d = Math.floor(m / 1440)
   const h = Math.floor((m % 1440) / 60)
   return d > 0 ? `${d}d ${h}h ${m % 60}m` : h > 0 ? `${h}h ${m % 60}m` : `${m}m`
+}
+
+
+// ── Claude Code's own history ───────────────────────────────────────────────────────────────
+
+// Parse ~/.claude/stats-cache.json into the shape the charts use. Unknown shapes give null.
+export const parseClaudeStats = (text: string): ClaudeStats | null => {
+  try {
+    const raw = JSON.parse(text)
+    const days: ClaudeStats['days'] = {}
+    for (const row of raw.dailyModelTokens ?? []) {
+      if (!row?.date) continue
+      days[row.date] = { tokensByModel: row.tokensByModel ?? {}, messages: 0, sessions: 0, toolCalls: 0 }
+    }
+    for (const row of raw.dailyActivity ?? []) {
+      if (!row?.date) continue
+      const day = days[row.date] ?? { tokensByModel: {}, messages: 0, sessions: 0, toolCalls: 0 }
+      days[row.date] = { ...day, messages: row.messageCount ?? 0, sessions: row.sessionCount ?? 0, toolCalls: row.toolCallCount ?? 0 }
+    }
+    const models: ClaudeStats['models'] = {}
+    for (const [id, m] of Object.entries(raw.modelUsage ?? {}) as Array<[string, any]>) {
+      models[id] = {
+        input: m.inputTokens ?? 0, output: m.outputTokens ?? 0,
+        cacheRead: m.cacheReadInputTokens ?? 0, cacheWrite: m.cacheCreationInputTokens ?? 0,
+      }
+    }
+    const hours = Array(24).fill(0)
+    for (const [h, n] of Object.entries(raw.hourCounts ?? {})) hours[Number(h)] = Number(n) || 0
+    return {
+      days,
+      models,
+      totalSessions: raw.totalSessions ?? 0,
+      longestSessionMs: raw.longestSession?.duration ?? 0,
+      firstSessionDate: raw.firstSessionDate ?? null,
+      hourCounts: hours,
+      computedOn: raw.lastComputedDate ?? null,
+    }
+  } catch {
+    return null
+  }
+}
+
+const MODEL_FACTOR: Array<[RegExp, number]> = [[/opus/i, 5], [/sonnet/i, 3], [/haiku/i, 1], [/fable/i, 5]]
+const factorOf = (model: string) => MODEL_FACTOR.find(([test]) => test.test(model))?.[1] ?? 3
+
+// A past day from Claude Code's file, split into input, output and cache by that model's all-time
+// ratios (the file keeps only a daily total per model) and priced at `unitPrice` per weighted
+// unit, the rate measured in this session. Marked estimated.
+export const dayFromClaude = (day: ClaudeStats['days'][string], models: ClaudeStats['models'], unitPrice: number | null): DayStat => {
+  const out: DayStat = { ...emptyDay(), sessions: day.sessions, requests: day.messages, estimated: true }
+  for (const [id, total] of Object.entries(day.tokensByModel)) {
+    const m = models[id]
+    const all = m ? m.input + m.output + m.cacheRead + m.cacheWrite : 0
+    const share = (part: number) => (all > 0 ? (total * part) / all : 0)
+    const input = m ? share(m.input) + share(m.cacheRead) + share(m.cacheWrite) : total
+    const output = m ? share(m.output) : 0
+    const cacheRead = m ? share(m.cacheRead) : 0
+    const cacheWrite = m ? share(m.cacheWrite) : 0
+    const weight = ((input - cacheRead - cacheWrite) + 1.25 * cacheWrite + 0.1 * cacheRead + 5 * output) * factorOf(id)
+    const usd = unitPrice ? weight * unitPrice : 0
+    out.models[id] = { usd, requests: 0, input, output, cacheRead, cacheWrite }
+    out.input += input
+    out.output += output
+    out.cacheRead += cacheRead
+    out.cacheWrite += cacheWrite
+    out.usd += usd
+  }
+  return out
+}
+
+// Our own days win (they are exact); every other day comes from Claude Code's file.
+export const mergeHistory = (history: History, claude: ClaudeStats | null, unitPrice: number | null): History => {
+  if (!claude) return history
+  const days = { ...history.days }
+  for (const [key, day] of Object.entries(claude.days)) {
+    if (!days[key]) days[key] = dayFromClaude(day, claude.models, unitPrice)
+  }
+  return {
+    ...history,
+    days,
+    sessions: Math.max(history.sessions, claude.totalSessions),
+    longestSessionMs: Math.max(history.longestSessionMs, claude.longestSessionMs),
+    firstSeen: claude.firstSessionDate ? Math.min(Date.parse(claude.firstSessionDate), history.firstSeen ?? Infinity) : history.firstSeen,
+  }
 }

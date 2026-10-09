@@ -30,7 +30,7 @@ export type ModelSpend = {
 
 export type DayModel = { usd: number; requests: number; input: number; output: number; cacheRead: number; cacheWrite: number }
 
-export type DayStat = DayModel & { sessions: number; models: Record<string, DayModel> }
+export type DayStat = DayModel & { sessions: number; models: Record<string, DayModel>; estimated?: boolean }
 
 // Kept across sessions in the plugin's store: one row per local calendar day.
 export type History = {
@@ -38,6 +38,19 @@ export type History = {
   sessions: number
   longestSessionMs: number
   firstSeen: number | null
+}
+
+// What Claude Code keeps in ~/.claude/stats-cache.json (the file /usage reads), reduced to
+// what the charts need. Read only; refreshed every few minutes.
+export type ClaudeModelTotals = { input: number; output: number; cacheRead: number; cacheWrite: number }
+export type ClaudeStats = {
+  days: Record<string, { tokensByModel: Record<string, number>; messages: number; sessions: number; toolCalls: number }>
+  models: Record<string, ClaudeModelTotals>
+  totalSessions: number
+  longestSessionMs: number
+  firstSessionDate: string | null
+  hourCounts: number[]
+  computedOn: string | null
 }
 
 export type StatsView = 'overview' | 'tokens' | 'cost' | 'cache' | 'inout'
@@ -65,6 +78,10 @@ export type Ledger = {
   statsModel: string | null
   statsChart: StatsChart
   sessionStartedAt: number | null
+  claudeStats: ClaudeStats | null
+  // Session cost and weighted requests since the mod began measuring, to price a past day's tokens.
+  usdBaseline: number | null
+  weightedSince: number
   totalUsd: number
   samples: SpendSample[]
   budgetUsd: number | null
