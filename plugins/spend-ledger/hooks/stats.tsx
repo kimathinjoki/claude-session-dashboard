@@ -9,8 +9,17 @@ export const VIEW_LABEL: Record<StatsView, string> = {
   overview: 'Overview', tokens: 'Tokens', cost: 'Cost', cache: 'Cache', inout: 'In / Out',
 }
 export const RANGE_LABEL: Record<StatsRange, string> = {
-  session: 'This session', '7d': 'Last 7 days', '30d': 'Last 30 days', all: 'All time',
+  session: 'Session', '7d': '7 days', '30d': '30 days', all: 'All time',
 }
+// Each tab keeps its own colour: the thin rule under it at rest, a bold bar when chosen, and the
+// chart drawn in the chosen view's colour.
+export const VIEW_HUE: Record<StatsView, string> = {
+  overview: '#fb923c', tokens: '#93c5fd', cost: '#4ade80', cache: '#22d3ee', inout: '#c084fc',
+}
+export const RANGE_HUE: Record<StatsRange, string> = {
+  session: '#f472b6', '7d': '#34d399', '30d': '#60a5fa', all: '#c084fc',
+}
+export const TAB_GAP = 2
 
 export const emptyDay = (): DayStat => ({
   usd: 0, requests: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, sessions: 0, models: {},
@@ -81,11 +90,11 @@ export type Series = { name: string; hue: string; values: number[] }
 export const seriesFor = (view: StatsView, points: Point[]): Series[] => {
   switch (view) {
     case 'cost':
-      return [{ name: 'cost', hue: '#4ade80', values: points.map(p => p.usd) }]
+      return [{ name: 'cost', hue: VIEW_HUE.cost, values: points.map(p => p.usd) }]
     case 'cache':
       return [{
         name: 'read from cache',
-        hue: '#22d3ee',
+        hue: VIEW_HUE.cache,
         values: points.map(p => (p.input > 0 ? (p.cacheRead / p.input) * 100 : 0)),
       }]
     case 'inout':
@@ -94,7 +103,7 @@ export const seriesFor = (view: StatsView, points: Point[]): Series[] => {
         { name: 'out', hue: '#fb923c', values: points.map(p => p.output) },
       ]
     default:
-      return [{ name: 'tokens', hue: '#93c5fd', values: points.map(p => p.input + p.output) }]
+      return [{ name: 'tokens', hue: VIEW_HUE.tokens, values: points.map(p => p.input + p.output) }]
   }
 }
 

@@ -3,7 +3,7 @@ import type { EngineInterface, ModelUsage, Register } from 'claude-code'
 
 import type { Ledger, SpendBucket, SpendEntry, StatsRange, StatsView } from '../types'
 import {
-  LEVEL_HUE, RANGES, RANGE_LABEL, SHADES, VIEWS, VIEW_LABEL, addToDay, compact, lineChart, dayKey, durationText,
+  LEVEL_HUE, RANGES, RANGE_HUE, RANGE_LABEL, SHADES, TAB_GAP, VIEWS, VIEW_HUE, VIEW_LABEL, addToDay, compact, lineChart, dayKey, durationText,
   emptyHistory, funFact, heatmap, pointsFor, seriesFor, tilesFor,
 } from './stats'
 
@@ -410,6 +410,29 @@ export const register: Register = on => {
       void update($, ledger, current => ({ ...initial, ...current, ...change }))
     const cycle = <T,>(list: T[], value: T) => list[(list.indexOf(value) + 1) % list.length]!
 
+    // A row of clickable tabs, each with its colour underneath: a thin rule at rest, a bold bar
+    // under the chosen one. The labels are plain buttons, so the rule lines up character for
+    // character beneath them.
+    const tabs = <T extends string,>(
+      list: T[], chosen: T, label: (t: T) => string, hue: (t: T) => string, choose: (t: T) => void, prefix: string,
+    ) => (
+      <Box flexDirection="column">
+        <Box flexDirection="row" columnGap={TAB_GAP}>
+          {list.map(t => (
+            <Button key={`${prefix}-${t}`} plain dimColor={t !== chosen} label={label(t)} onPress={() => choose(t)} />
+          ))}
+        </Box>
+        <Text>
+          {list.map((t, i) => (
+            <Text key={`${prefix}-rule-${t}`}>
+              <Text color={hue(t)} bold={t === chosen} dimColor={t !== chosen}>{(t === chosen ? '▀' : '─').repeat(label(t).length)}</Text>
+              {i < list.length - 1 ? ' '.repeat(TAB_GAP) : ''}
+            </Text>
+          ))}
+        </Text>
+      </Box>
+    )
+
     const renderStats = () => {
       const view: StatsView = l.statsView ?? 'overview'
       const range: StatsRange = l.statsRange ?? 'session'
@@ -420,17 +443,15 @@ export const register: Register = on => {
 
       const header = (
         <Box flexDirection="column" marginTop={1}>
-          <Text bold color="#fb923c">▤ STATS</Text>
-          <Box columnGap={2} flexWrap="wrap">
-            {VIEWS.map(v => (
-              <Button key={`view-${v}`} plain label={v === view ? `▸ ${VIEW_LABEL[v]}` : VIEW_LABEL[v]} onPress={() => setStats({ statsView: v })} />
-            ))}
-          </Box>
-          <Box columnGap={2} flexWrap="wrap">
-            {RANGES.map(r => (
-              <Button key={`range-${r}`} plain label={r === range ? `● ${RANGE_LABEL[r]}` : RANGE_LABEL[r]} onPress={() => setStats({ statsRange: r })} />
-            ))}
-          </Box>
+          <Text>
+            <Text bold color="#fb923c">▤ STATS  </Text>
+            <Text bold color={VIEW_HUE[view]}>{VIEW_LABEL[view]}</Text>
+            <Text dimColor> · </Text>
+            <Text bold color={RANGE_HUE[range]}>{RANGE_LABEL[range]}</Text>
+            {model ? <Text><Text dimColor> · </Text><Text bold color={modelHue(model)}>{modelName(model)}</Text></Text> : null}
+          </Text>
+          {tabs(VIEWS, view, v => VIEW_LABEL[v], v => VIEW_HUE[v], v => setStats({ statsView: v }), 'view')}
+          {tabs(RANGES, range, r => RANGE_LABEL[r], r => RANGE_HUE[r], r => setStats({ statsRange: r }), 'range')}
           <Box gap={1} flexWrap="wrap">
             <Button key="cycle-view" hotkey="v" label="Next view" onPress={() => setStats({ statsView: cycle(VIEWS, view) })} />
             <Button key="cycle-range" hotkey="r" label="Next range" onPress={() => setStats({ statsRange: cycle(RANGES, range) })} />
