@@ -463,6 +463,10 @@ export const register: Register = on => {
         ? (l.totalUsd - l.usdBaseline) / l.weightedSince
         : null
       const history = mergeHistory(l.history ?? emptyHistory(), l.claudeStats ?? null, unitPrice)
+      // On a subscription the dollar figures are what the tokens would cost at API prices, not a
+      // charge: say so wherever a dollar figure is shown.
+      const asValue = onPlan || (l.claudeStats ? !l.claudeStats.recordsCost : false)
+      const costWord = asValue ? 'API value' : 'Cost'
       const modelIds = Object.keys(l.models ?? {})
       const model = l.statsModel && modelIds.includes(l.statsModel) ? l.statsModel : null
       const chartWidth = Math.max(16, width - 10)
@@ -541,7 +545,7 @@ export const register: Register = on => {
               {tile('Favorite model', tiles.favorite ? modelName(tiles.favorite) : '-', tiles.favorite ? modelHue(tiles.favorite) : '#94a3b8')}
               {tile('Total tokens', compact(tiles.total.input + tiles.total.output))}
               {tile('Requests', compact(tiles.total.requests))}
-              {tile('Cost', usd(tiles.total.usd), '#4ade80')}
+              {tile(costWord, usd(tiles.total.usd), '#4ade80')}
               {range !== 'session' && tile('Sessions', String(tiles.total.sessions))}
               {range !== 'session' && (
                 <Text><Text dimColor>Active days: </Text><Text bold color="#fdba74">{tiles.activeDays}</Text><Text dimColor>/{tiles.spanDays}</Text></Text>
@@ -578,7 +582,10 @@ export const register: Register = on => {
             <Text dimColor>{'\n'}Not enough {range === 'session' ? 'of this session' : 'history'} yet for a chart. It fills in as you work.</Text>
           ) : (
             <Box flexDirection="column" marginTop={1}>
-              <Text bold>{VIEW_LABEL[view]} {range === 'session' ? 'per 5 minutes' : 'per day'}{model && range !== 'session' ? `, ${modelName(model)}` : ''}</Text>
+              <Text bold>{view === 'cost' ? costWord : VIEW_LABEL[view]} {range === 'session' ? 'per 5 minutes' : 'per day'}{model && range !== 'session' ? `, ${modelName(model)}` : ''}</Text>
+              {view === 'cost' && asValue && (
+                <Text color="#93c5fd">› what these tokens would cost at API prices; on a plan you pay the plan, not this</Text>
+              )}
               {series.map(s => {
                 const rows = drawChart(chartStyle, s.values, chartWidth - labelWidth, height, max)
                 // Each column takes the colour of its point's change: rising, falling or level.

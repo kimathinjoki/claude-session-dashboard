@@ -51,6 +51,8 @@ export type ClaudeStats = {
   firstSessionDate: string | null
   hourCounts: number[]
   computedOn: string | null
+  // False on a subscription, where Claude Code records every model's cost as 0.
+  recordsCost: boolean
 }
 
 export type StatsView = 'overview' | 'tokens' | 'cost' | 'cache' | 'inout'

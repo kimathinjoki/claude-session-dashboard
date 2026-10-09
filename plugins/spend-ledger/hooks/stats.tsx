@@ -403,6 +403,7 @@ export const parseClaudeStats = (text: string): ClaudeStats | null => {
       firstSessionDate: raw.firstSessionDate ?? null,
       hourCounts: hours,
       computedOn: raw.lastComputedDate ?? null,
+      recordsCost: Object.values(raw.modelUsage ?? {}).some((m: any) => (m?.costUSD ?? 0) > 0),
     }
   } catch {
     return null

@@ -134,5 +134,6 @@ test("Claude Code's own history fills the past days, estimated", async () => {
   expect(day.requests).toBe(1237)
   expect(day.usd).toBeGreaterThan(0)
   expect(merged.sessions).toBe(223)
+  expect(claude.recordsCost).toBe(false)
   expect(parseClaudeStats('not json')).toBeNull()
 })
