@@ -7,7 +7,7 @@ import {
   emptyHistory, funFact, heatmap, pointsFor, seriesFor, tilesFor,
 } from './stats'
 
-const initial: Ledger = { entries: [], totalUsd: 0, samples: [], budgetUsd: null, warned: [], limits: [], planBudgetPercent: null, limitSamples: [], expanded: false, models: {}, buckets: [], history: emptyHistory(), statsView: 'overview', statsRange: 'session', statsModel: null, statsChart: 'line', sessionStartedAt: null, claudeStats: null, usdBaseline: null, weightedSince: 0 }
+const initial: Ledger = { entries: [], totalUsd: 0, samples: [], budgetUsd: null, warned: [], limits: [], planBudgetPercent: null, limitSamples: [], expanded: false, models: {}, buckets: [], history: emptyHistory(), statsView: 'overview', statsRange: 'session', statsModel: null, statsChart: 'line', hardStop: false, sessionStartedAt: null, claudeStats: null, usdBaseline: null, weightedSince: 0 }
 const ledger = atom({ plugin: 'spend-ledger', key: 'ledger' } as const, initial)
 
 const PANE = 'spend'
@@ -148,6 +148,18 @@ async function ensureEntry($: EngineInterface, entry: SpendEntry) {
   await update($, ledger, l => ((l.entries ?? []).some(one => one.id === entry.id) ? l : { ...l, entries: [...l.entries, entry] }))
 }
 
+// Whether the budget in force is used up: dollars this session, or the plan line on the 5-hour window.
+export const budgetReached = (l: Pick<Ledger, 'budgetUsd' | 'planBudgetPercent' | 'totalUsd' | 'limits'>) => {
+  const fiveHour = (l.limits ?? []).find(w => w.kind === 'five_hour')
+  if (l.planBudgetPercent != null && fiveHour && fiveHour.percentUsed >= l.planBudgetPercent) {
+    return `the 5-hour plan window is at ${Math.round(fiveHour.percentUsed)}%, past your ${l.planBudgetPercent}% line`
+  }
+  if (l.budgetUsd != null && l.totalUsd >= l.budgetUsd) {
+    return `${usd(l.totalUsd)} spent this session, past your ${usd(l.budgetUsd)} budget`
+  }
+  return null
+}
+
 async function warnOnBudget($: EngineInterface) {
   const l = await readLedger($)
   const fiveHour = l.limits.find(w => w.kind === 'five_hour')
@@ -182,13 +194,15 @@ export const register: Register = on => {
     await $.store.set(HISTORY_KEY, counted)
     const budget = await $.store.get('budgetUsd')
     const planBudget = await $.store.get('planBudgetPercent')
+    const hardStop = await $.store.get('hardStop')
     await update($, ledger, l => ({
       ...initial,
       ...l,
       budgetUsd: typeof budget === 'number' ? budget : l?.budgetUsd ?? null,
       planBudgetPercent: typeof planBudget === 'number' ? planBudget : l?.planBudgetPercent ?? null,
+      hardStop: hardStop === true,
     }))
-    await $.command.register({ name: 'spend', description: 'Spend panel: /spend opens it; /spend budget 50 (dollars, API key) or /spend budget 80% (share of the 5-hour plan window); /spend budget off clears it' })
+    await $.command.register({ name: 'spend', description: 'Spend panel: /spend opens it; /spend budget 50 (dollars) or /spend budget 80% (plan window), add hard to refuse prompts once reached; /spend hard on|off; /spend budget off clears it' })
     void $.ui.open({ id: PANE, title: 'Spend' })
 
     // Claude Code's own usage history, the file /usage reads: the 7-day, 30-day and all-time views.
@@ -280,6 +294,19 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // The hard stop: a prompt you type is refused once the budget is reached. Slash commands go
+  // through so /spend can raise or clear it, and anything that is not your own typing (an agent's
+  // result arriving, a scheduled wake-up) is left alone.
+  on('prompt.submit', async ($, e, next) => {
+    const isOwn = !e.origin || e.origin.kind === 'composer'
+    if (!isOwn || e.text.trim().startsWith('/')) return next(e)
+    const l = await readLedger($)
+    if (!l.hardStop) return next(e)
+    const reason = budgetReached(l)
+    if (!reason) return next(e)
+    return { drop: `Budget reached: ${reason}. Raise it (/spend budget 100), clear it (/spend budget off) or turn the hard stop off (/spend hard off) to continue.` }
+  }).catch(($, e, next) => next(e))
+
   on('turn.start', async ($, e, next) => {
     promptText.set(e.turnId, e.text)
     return next(e)
@@ -357,12 +384,23 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'spend' }, async ($, e) => {
-    const [word, value] = e.args.trim().split(/\s+/)
+    const [word, value, extra] = e.args.trim().split(/\s+/)
+    if (word === 'hard') {
+      const enabled = value !== 'off'
+      await $.store.set('hardStop', enabled)
+      await update($, ledger, l => ({ ...initial, ...l, hardStop: enabled }))
+      return { text: enabled ? 'Hard stop on: once the budget is reached, new prompts are refused until you raise or clear it.' : 'Hard stop off: the budget only warns.' }
+    }
+    if (word === 'budget' && extra === 'hard') {
+      await $.store.set('hardStop', true)
+      await update($, ledger, l => ({ ...initial, ...l, hardStop: true }))
+    }
     if (word === 'budget') {
       if (value === 'off') {
         await $.store.delete('budgetUsd')
         await $.store.delete('planBudgetPercent')
-        await update($, ledger, l => ({ ...initial, ...l, budgetUsd: null, planBudgetPercent: null, warned: [] }))
+        await $.store.delete('hardStop')
+        await update($, ledger, l => ({ ...initial, ...l, budgetUsd: null, planBudgetPercent: null, warned: [], hardStop: false }))
         return { text: 'Budget cleared.' }
       }
       if (value?.endsWith('%')) {
@@ -829,13 +867,20 @@ export const register: Register = on => {
             {l.planBudgetPercent !== null && <Text color="#fb923c">warn at {l.planBudgetPercent}% of the 5-hour window</Text>}
             {l.budgetUsd !== null && <Text color="#fb923c">{usd(l.budgetUsd)} this session</Text>}
             {l.planBudgetPercent === null && l.budgetUsd === null && <Text dimColor>none set</Text>}
+            {(l.planBudgetPercent !== null || l.budgetUsd !== null) && (
+              l.hardStop
+                ? <Text color={budgetReached(l) ? '#ef4444' : '#fb923c'} bold>{budgetReached(l) ? '  ■ HARD STOP: prompts refused' : '  ■ hard stop on'}</Text>
+                : <Text dimColor>  warn only</Text>
+            )}
           </Text>
           <Box flexDirection="row" columnGap={1} flexWrap="wrap">
             {(onPlan
               ? [['p50', '1', 'Warn at 50%', 'budget 50%'], ['p75', '2', '75%', 'budget 75%'], ['p90', '3', '90%', 'budget 90%']]
               : [['b25', '1', '$25', 'budget 25'], ['b50', '2', '$50', 'budget 50'], ['b100', '3', '$100', 'budget 100'], ['b250', '4', '$250', 'budget 250']]
             )
-              .concat(l.budgetUsd !== null || l.planBudgetPercent !== null ? [['boff', '0', 'Clear', 'budget off']] : [])
+              .concat(l.budgetUsd !== null || l.planBudgetPercent !== null
+                ? [['hard', 'h', l.hardStop ? 'Hard stop: on' : 'Hard stop: off', l.hardStop ? 'hard off' : 'hard on'], ['boff', '0', 'Clear', 'budget off']]
+                : [])
               .map(([key, hotkey, label, args]) => (
                 <Button key={key!} hotkey={hotkey!} label={label!} onPress={() => void $.command.run({ command: 'spend', args: args! })} />
               ))}

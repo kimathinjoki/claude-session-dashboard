@@ -147,3 +147,13 @@ test("past days are priced at each model's list price", async () => {
   expect(listCost('claude-sonnet-5-5', { input: 2_000_000, output: 0, cacheRead: 0, cacheWrite: 0 })).toBe(4)
   expect(listCost('some-unknown-model', { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 })).toBeNull()
 })
+
+
+import { budgetReached } from './register'
+
+test('the hard stop knows when the budget is used up', async () => {
+  expect(budgetReached({ budgetUsd: 50, planBudgetPercent: null, totalUsd: 49.9, limits: [] })).toBeNull()
+  expect(budgetReached({ budgetUsd: 50, planBudgetPercent: null, totalUsd: 50.2, limits: [] })).toMatch(/past your \$50.00 budget/)
+  expect(budgetReached({ budgetUsd: null, planBudgetPercent: 80, totalUsd: 0, limits: [{ kind: 'five_hour', percentUsed: 81 }] })).toMatch(/past your 80% line/)
+  expect(budgetReached({ budgetUsd: null, planBudgetPercent: 80, totalUsd: 0, limits: [{ kind: 'five_hour', percentUsed: 40 }] })).toBeNull()
+})

@@ -87,6 +87,9 @@ export type Ledger = {
   totalUsd: number
   samples: SpendSample[]
   budgetUsd: number | null
+  // When on, a prompt you type is refused once the budget is reached (the dollar one, or the
+  // plan line). Work already running carries on; slash commands always go through.
+  hardStop: boolean
   warned: number[]
 }
 
