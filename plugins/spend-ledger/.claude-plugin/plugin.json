@@ -1,0 +1,1 @@
+{ "name": "spend-ledger", "version": "0.1.0", "description": "A Spend panel: what each prompt and each sub-agent cost, burn rate, a budget bar and running insights, reconciled to /cost", "types": "./types/index.d.ts" }

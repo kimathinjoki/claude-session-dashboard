@@ -1,0 +1,1 @@
+{ "name": "cache-tax", "version": "0.2.0", "description": "A Cache panel: a countdown gauge for the prompt cache, a hit-rate sparkline, cold-cache warnings and /keepwarm", "types": "./types/index.d.ts" }

@@ -1,0 +1,1 @@
+{ "name": "agent-progress", "version": "0.2.0", "description": "Crew: a side panel of every sub-agent at work, each with its own worker avatar, model, live activity, cache hit bar, tokens and warnings", "types": "./types/index.d.ts" }
