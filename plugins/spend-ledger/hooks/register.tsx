@@ -1,13 +1,13 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, ModelUsage, Register } from 'claude-code'
 
-import type { Ledger, SpendBucket, SpendEntry, StatsRange, StatsView } from '../types'
+import type { Ledger, SpendBucket, SpendEntry, StatsChart, StatsRange, StatsView } from '../types'
 import {
-  LEVEL_HUE, RANGES, RANGE_HUE, RANGE_LABEL, SHADES, TAB_GAP, VIEWS, VIEW_HUE, VIEW_LABEL, addToDay, compact, lineChart, dayKey, durationText,
+  CHARTS, CHART_HUE, CHART_LABEL, LEVEL_HUE, RANGES, RANGE_HUE, RANGE_LABEL, SHADES, TAB_GAP, VIEWS, VIEW_HUE, VIEW_LABEL, addToDay, compact, drawChart, dayKey, durationText,
   emptyHistory, funFact, heatmap, pointsFor, seriesFor, tilesFor,
 } from './stats'
 
-const initial: Ledger = { entries: [], totalUsd: 0, samples: [], budgetUsd: null, warned: [], limits: [], planBudgetPercent: null, limitSamples: [], expanded: false, models: {}, buckets: [], history: emptyHistory(), statsView: 'overview', statsRange: 'session', statsModel: null, sessionStartedAt: null }
+const initial: Ledger = { entries: [], totalUsd: 0, samples: [], budgetUsd: null, warned: [], limits: [], planBudgetPercent: null, limitSamples: [], expanded: false, models: {}, buckets: [], history: emptyHistory(), statsView: 'overview', statsRange: 'session', statsModel: null, statsChart: 'line', sessionStartedAt: null }
 const ledger = atom({ plugin: 'spend-ledger', key: 'ledger' } as const, initial)
 
 const PANE = 'spend'
@@ -406,7 +406,7 @@ export const register: Register = on => {
       insights.push([`at this rate the budget lasts ${hours >= 1 ? `${hours.toFixed(1)}h` : `${Math.round(hours * 60)}m`}`, hours < 0.5 ? '#f97316' : '#93c5fd'])
     }
 
-    const setStats = (change: Partial<Pick<Ledger, 'statsView' | 'statsRange' | 'statsModel'>>) =>
+    const setStats = (change: Partial<Pick<Ledger, 'statsView' | 'statsRange' | 'statsModel' | 'statsChart'>>) =>
       void update($, ledger, current => ({ ...initial, ...current, ...change }))
     const cycle = <T,>(list: T[], value: T) => list[(list.indexOf(value) + 1) % list.length]!
 
@@ -436,6 +436,7 @@ export const register: Register = on => {
     const renderStats = () => {
       const view: StatsView = l.statsView ?? 'overview'
       const range: StatsRange = l.statsRange ?? 'session'
+      const chartStyle: StatsChart = l.statsChart ?? 'line'
       const history = l.history ?? emptyHistory()
       const modelIds = Object.keys(l.models ?? {})
       const model = l.statsModel && modelIds.includes(l.statsModel) ? l.statsModel : null
@@ -452,9 +453,13 @@ export const register: Register = on => {
           </Text>
           {tabs(VIEWS, view, v => VIEW_LABEL[v], v => VIEW_HUE[v], v => setStats({ statsView: v }), 'view')}
           {tabs(RANGES, range, r => RANGE_LABEL[r], r => RANGE_HUE[r], r => setStats({ statsRange: r }), 'range')}
+          {view !== 'overview' && tabs(CHARTS, chartStyle, c => CHART_LABEL[c], c => CHART_HUE[c], c => setStats({ statsChart: c }), 'chart')}
           <Box gap={1} flexWrap="wrap">
             <Button key="cycle-view" hotkey="v" label="Next view" onPress={() => setStats({ statsView: cycle(VIEWS, view) })} />
             <Button key="cycle-range" hotkey="r" label="Next range" onPress={() => setStats({ statsRange: cycle(RANGES, range) })} />
+            {view !== 'overview' && (
+              <Button key="cycle-chart" hotkey="c" label="Next chart" onPress={() => setStats({ statsChart: cycle(CHARTS, chartStyle) })} />
+            )}
             {modelIds.length > 1 && (
               <Button
                 key="cycle-model"
@@ -535,7 +540,7 @@ export const register: Register = on => {
             <Box flexDirection="column" marginTop={1}>
               <Text bold>{VIEW_LABEL[view]} {range === 'session' ? 'per 5 minutes' : 'per day'}{model && range !== 'session' ? `, ${modelName(model)}` : ''}</Text>
               {series.map(s => {
-                const rows = lineChart(s.values, chartWidth - labelWidth, height, max)
+                const rows = drawChart(chartStyle, s.values, chartWidth - labelWidth, height, max)
                 return (
                   <Box key={`chart-${s.name}`} flexDirection="column">
                     {rows.map((row, i) => (

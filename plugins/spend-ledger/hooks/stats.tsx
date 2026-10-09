@@ -1,7 +1,7 @@
 // The STATS dashboard: pure helpers for the history the mod keeps across sessions, the series
 // each view charts, a braille line chart, a day heatmap and the stat tiles.
 
-import type { DayStat, History, SpendBucket, StatsRange, StatsView } from '../types'
+import type { DayStat, History, SpendBucket, StatsChart, StatsRange, StatsView } from '../types'
 
 export const VIEWS: StatsView[] = ['overview', 'tokens', 'cost', 'cache', 'inout']
 export const RANGES: StatsRange[] = ['session', '7d', '30d', 'all']
@@ -20,6 +20,9 @@ export const RANGE_HUE: Record<StatsRange, string> = {
   session: '#f472b6', '7d': '#34d399', '30d': '#60a5fa', all: '#c084fc',
 }
 export const TAB_GAP = 2
+export const CHARTS: StatsChart[] = ['line', 'area', 'bars', 'dots']
+export const CHART_LABEL: Record<StatsChart, string> = { line: 'Line', area: 'Area', bars: 'Bars', dots: 'Dots' }
+export const CHART_HUE: Record<StatsChart, string> = { line: '#93c5fd', area: '#2dd4bf', bars: '#fb923c', dots: '#f472b6' }
 
 export const emptyDay = (): DayStat => ({
   usd: 0, requests: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, sessions: 0, models: {},
@@ -155,6 +158,63 @@ export const lineChart = (values: number[], width: number, height: number, max =
   }
   return grid.map(row => row.join(''))
 }
+
+const EIGHTHS = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'] as const
+
+// The level of each column in eighths of a row, or -1 for a gap.
+const eighthsOf = (pts: number[], height: number, max: number) =>
+  pts.map(v => (!Number.isFinite(v) ? -1 : max > 0 ? Math.round((Math.max(0, v) / max) * height * 8) : 0))
+
+// Filled under the curve, its top edge smoothed to an eighth of a row. Rows top first.
+export const areaChart = (values: number[], width: number, height: number, max = Math.max(...values.filter(Number.isFinite), 0)) => {
+  const levels = eighthsOf(stretch(values, width), height, max)
+  const rows: string[] = []
+  for (let row = height - 1; row >= 0; row -= 1) {
+    rows.push(levels.map(l => (l < 0 ? ' ' : l - row * 8 >= 8 ? '█' : l - row * 8 <= 0 ? (row === 0 ? '▁' : ' ') : EIGHTHS[l - row * 8]!)).join(''))
+  }
+  return rows
+}
+
+// One bar per point with a gap between, as wide as the room allows. Rows top first.
+export const barChart = (values: number[], width: number, height: number, max = Math.max(...values.filter(Number.isFinite), 0)) => {
+  if (values.length === 0) return Array(height).fill(' '.repeat(width))
+  const pts = values.length > width ? resample(values, Math.floor(width / 2)) : values
+  const slot = Math.max(1, Math.floor(width / pts.length))
+  const barWidth = slot >= 3 ? slot - 1 : slot
+  const levels = eighthsOf(pts, height, max)
+  const rows: string[] = []
+  for (let row = height - 1; row >= 0; row -= 1) {
+    let line = ''
+    for (const l of levels) {
+      const fill = l - row * 8
+      const ch = l < 0 ? ' ' : fill >= 8 ? '█' : fill <= 0 ? ' ' : EIGHTHS[fill]!
+      line += ch.repeat(barWidth) + ' '.repeat(slot - barWidth)
+    }
+    rows.push(line.padEnd(width).slice(0, width))
+  }
+  return rows
+}
+
+// A point per column in braille, two across and four down per cell, nothing joining them.
+const DOT = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]] as const
+export const dotChart = (values: number[], width: number, height: number, max = Math.max(...values.filter(Number.isFinite), 0)) => {
+  const pts = stretch(values, width * 2)
+  const levels = height * 4
+  const grid: number[][] = Array.from({ length: height }, () => Array(width).fill(0))
+  pts.forEach((v, x) => {
+    if (!Number.isFinite(v)) return
+    const y = max > 0 ? Math.min(levels - 1, Math.round((Math.max(0, v) / max) * (levels - 1))) : 0
+    const row = height - 1 - Math.floor(y / 4)
+    grid[row]![Math.floor(x / 2)]! |= DOT[3 - (y % 4)]![x % 2]!
+  })
+  return grid.map(r => r.map(bits => String.fromCharCode(0x2800 + bits)).join(''))
+}
+
+export const drawChart = (style: StatsChart, values: number[], width: number, height: number, max: number) =>
+  style === 'area' ? areaChart(values, width, height, max)
+    : style === 'bars' ? barChart(values, width, height, max)
+      : style === 'dots' ? dotChart(values, width, height, max)
+        : lineChart(values, width, height, max)
 
 // GitHub-style activity: 7 rows (Mon to Sun) by `weeks` columns, each day shaded by tokens.
 export const SHADES = ['·', '░', '▒', '▓', '█'] as const

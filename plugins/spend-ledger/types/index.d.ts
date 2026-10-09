@@ -42,6 +42,7 @@ export type History = {
 
 export type StatsView = 'overview' | 'tokens' | 'cost' | 'cache' | 'inout'
 export type StatsRange = 'session' | '7d' | '30d' | 'all'
+export type StatsChart = 'line' | 'area' | 'bars' | 'dots'
 
 export type PlanWindow = { kind: string; percentUsed: number; resetsAt?: string }
 
@@ -62,6 +63,7 @@ export type Ledger = {
   statsRange: StatsRange
   // Charts one model only when set; null charts them all.
   statsModel: string | null
+  statsChart: StatsChart
   sessionStartedAt: number | null
   totalUsd: number
   samples: SpendSample[]

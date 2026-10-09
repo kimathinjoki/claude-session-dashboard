@@ -84,3 +84,14 @@ test('stats: days add up, streaks count and charts draw', async () => {
   expect(lineChart([Number.NaN, Number.NaN, 1, 1], 4, 2)).toEqual(['  ──', '    '])
   expect(heatmap(h, now, 4).levels.length).toBe(7)
 })
+
+
+import { areaChart, barChart, dotChart } from './stats'
+
+test('chart styles: area fills, bars stand apart, dots stand alone', async () => {
+  expect(areaChart([0, 1], 2, 1)).toEqual(['▁█'])
+  expect(barChart([1, 2], 6, 1)).toEqual(['▄▄ ██ '])
+  const dots = dotChart([0, 1], 1, 1)
+  expect(dots[0]!.length).toBe(1)
+  expect(dots[0]).not.toBe(String.fromCharCode(0x2800))
+})
