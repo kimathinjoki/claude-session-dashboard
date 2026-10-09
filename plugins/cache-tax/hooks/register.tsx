@@ -6,6 +6,7 @@ import type { CacheReading } from '../types'
 const initial: CacheReading = {
   lastRequestAt: null, cachedTokens: 0, ttlMinutes: 60, keepWarm: false, pings: 0, lastPingAt: null,
   history: [], readTokens: 0, writtenTokens: 0, coldStarts: 0,
+  rewrittenTokens: 0, pingReadTokens: 0, weightedAll: 0, sessionUsd: null, mainModel: '',
 }
 const reading = atom({ plugin: 'cache-tax', key: 'reading' } as const, initial)
 const tick = atom({ plugin: 'cache-tax', key: 'tick' } as const, 0)
@@ -24,6 +25,40 @@ const MARGIN_MS = 60_000
 const TICK_MS = 15_000
 const HISTORY = 24
 const SPARK = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
+
+// Relative list prices by model family, as the Spend panel uses them.
+const MODEL_FACTOR: Array<[RegExp, number]> = [[/opus/i, 5], [/sonnet/i, 3], [/haiku/i, 1], [/fable/i, 5]]
+export const modelFactor = (model: string) => MODEL_FACTOR.find(([test]) => test.test(model))?.[1] ?? 3
+
+// A request in units of "base input tokens", so /cost divided by the sum prices one.
+export const weightOf = (
+  u: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number },
+  model: string,
+  ttlMinutes: number,
+) =>
+  (u.input_tokens + writeMultiplier(ttlMinutes) * u.cache_creation_input_tokens + READ * u.cache_read_input_tokens + 5 * u.output_tokens) *
+  modelFactor(model)
+
+// The main thread's base input price per token, estimated from what the session actually cost.
+export const basePrice = (r: Pick<CacheReading, 'sessionUsd' | 'weightedAll' | 'mainModel'>) =>
+  r.sessionUsd && r.weightedAll > 0 ? (r.sessionUsd / r.weightedAll) * modelFactor(r.mainModel || 'opus') : null
+
+export type CacheCosts = { spent: number; saved: number; coldTax: number; pings: number; ifColdNow: number }
+
+export const cacheCosts = (r: CacheReading): CacheCosts | null => {
+  const base = basePrice(r)
+  if (base === null) return null
+  const write = writeMultiplier(r.ttlMinutes)
+  return {
+    spent: (r.writtenTokens * write + r.readTokens * READ) * base,
+    saved: r.readTokens * (1 - READ) * base,
+    coldTax: r.rewrittenTokens * (write - READ) * base,
+    pings: r.pingReadTokens * READ * base,
+    ifColdNow: r.cachedTokens * (write - READ) * base,
+  }
+}
+
+export const money = (n: number) => (n >= 100 ? `$${n.toFixed(0)}` : n >= 1 ? `$${n.toFixed(2)}` : `${Math.max(0, Math.round(n * 100))}¢`)
 
 export const tokens = (n: number) =>
   n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`
@@ -70,7 +105,7 @@ async function ping($: EngineInterface): Promise<string> {
     }
     const now = await $.clock.now()
     const readBack = reply.usage.cache_read_input_tokens
-    await update($, reading, r => ({ ...initial, ...r, lastRequestAt: now, lastPingAt: now, pings: r.pings + 1 }))
+    await update($, reading, r => ({ ...initial, ...r, lastRequestAt: now, lastPingAt: now, pings: r.pings + 1, pingReadTokens: (r.pingReadTokens ?? 0) + readBack }))
     return readBack > 0 ? `Cache pinged: ${tokens(readBack)} tokens read, window restarted.` : 'The cache had already lapsed; the ping re-wrote it.'
   } finally {
     pinging = false
@@ -99,6 +134,8 @@ export const register: Register = on => {
     $.clock.every(1000, () => void update($, tick, n => n + 1))
     $.clock.every(TICK_MS, async () => {
       const now = await $.clock.now()
+      const usage = await $.session.usage()
+      await update($, reading, saved => ({ ...initial, ...saved, sessionUsd: usage.cost?.usd ?? null }))
       const r = await readReading($)
       $.ui.status(statusText(r, now))
 
@@ -114,15 +151,25 @@ export const register: Register = on => {
   // The main thread's requests decide what is cached; a sub-agent's have their own prefix.
   on('turn.step', async function* ($, e, next) {
     const result = yield* next(e)
-    if (e.agentId || !result.usage) return result
+    if (!result.usage) return result
 
     const u = result.usage
+    const model = u.model || e.model
+    if (e.agentId) {
+      await update($, reading, saved => {
+        const r = { ...initial, ...saved }
+        return { ...r, weightedAll: r.weightedAll + weightOf(u, model, 5) }
+      })
+      return result
+    }
+
     const cached = u.cache_read_input_tokens + u.cache_creation_input_tokens
     const total = cached + u.input_tokens
     const share = total > 0 ? u.cache_read_input_tokens / total : 0
     const now = await $.clock.now()
     await update($, reading, saved => {
       const r = { ...initial, ...saved }
+      const isCold = r.cachedTokens > 20_000 && u.cache_creation_input_tokens > r.cachedTokens * 0.5
       return {
       ...r,
       lastRequestAt: now,
@@ -130,8 +177,11 @@ export const register: Register = on => {
       history: [...r.history, share].slice(-HISTORY),
       readTokens: r.readTokens + u.cache_read_input_tokens,
       writtenTokens: r.writtenTokens + u.cache_creation_input_tokens,
+      weightedAll: r.weightedAll + weightOf(u, model, r.ttlMinutes),
+      mainModel: model || r.mainModel,
       // A request that re-wrote most of a large prefix it should have read is a cold start.
-      coldStarts: r.coldStarts + (r.cachedTokens > 20_000 && u.cache_creation_input_tokens > r.cachedTokens * 0.5 ? 1 : 0),
+      coldStarts: r.coldStarts + (isCold ? 1 : 0),
+      rewrittenTokens: r.rewrittenTokens + (isCold ? u.cache_creation_input_tokens : 0),
       }
     })
     return result
@@ -237,6 +287,32 @@ export const register: Register = on => {
             <Text color="#f97316">⚠ {r.coldStarts} cold {r.coldStarts === 1 ? 'start' : 'starts'} this session</Text>
           )}
         </Box>
+
+        {(() => {
+          const c = cacheCosts(r)
+          if (!c) return <Text dimColor>{'\n'}Costs appear once the session has a cost reading.</Text>
+          const row = (label: string, value: string, hue: string, note?: string) => (
+            <Text key={label}>
+              <Text dimColor>{label.padEnd(18)}</Text>
+              <Text bold color={hue}>{value.padStart(7)}</Text>
+              {note ? <Text dimColor>  {note}</Text> : null}
+            </Text>
+          )
+          return (
+            <Box flexDirection="column" marginTop={1}>
+              <Text bold dimColor>COST (est.)</Text>
+              {row('caching this run', money(c.spent), '#22d3ee', `${tokens(r.writtenTokens)} written, ${tokens(r.readTokens)} read`)}
+              {row('saved by reads', money(c.saved), '#4ade80', 'vs paying full input')}
+              {row('cold-start tax', money(c.coldTax), c.coldTax > 0 ? '#f97316' : '#64748b', `${r.coldStarts} cold ${r.coldStarts === 1 ? 'start' : 'starts'}, ${tokens(r.rewrittenTokens)} re-written`)}
+              {row('keep-warm pings', money(c.pings), '#93c5fd', `${r.pings} ${r.pings === 1 ? 'ping' : 'pings'}`)}
+              {state !== 'empty' && row(state === 'cold' ? 'next prompt costs' : 'if it goes cold', `+${money(c.ifColdNow)}`, state === 'cold' ? '#ef4444' : '#f97316', `extra to re-write ${tokens(r.cachedTokens)}`)}
+              {r.pings > 0 && c.ifColdNow > 0 && (
+                <Text color="#4ade80">› each ping costs about {money((c.pings || 0) / Math.max(1, r.pings))}; a cold start about {money(c.ifColdNow)}</Text>
+              )}
+              <Text dimColor>priced from /cost with the published cache multipliers</Text>
+            </Box>
+          )
+        })()}
 
         <Box flexDirection="column" marginTop={1}>
           <Text>

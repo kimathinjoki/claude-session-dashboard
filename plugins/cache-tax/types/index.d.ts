@@ -10,6 +10,14 @@ export type CacheReading = {
   readTokens: number
   writtenTokens: number
   coldStarts: number
+  // Tokens re-written by cold starts: paid at the write price instead of the read price.
+  rewrittenTokens: number
+  // Tokens the keep-warm pings read back.
+  pingReadTokens: number
+  // Every request's tokens, weighted by price ratio and model, for pricing a token from /cost.
+  weightedAll: number
+  sessionUsd: number | null
+  mainModel: string
 }
 
 declare module 'claude-code' {

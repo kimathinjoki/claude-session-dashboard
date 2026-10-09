@@ -138,6 +138,23 @@ export const register: Register = on => {
             <Text dimColor>
               {tokens(cache.cachedTokens)} held · {Math.round(hit * 100)}% hits · {cache.keepWarm ? 'kept warm' : 'keep-warm off'}
             </Text>
+            {(() => {
+              // Same estimate as the Cache panel: a token priced from /cost, then the cache multipliers.
+              const factor = (m: string) => (/haiku/i.test(m) ? 1 : /sonnet/i.test(m) ? 3 : /opus|fable/i.test(m) ? 5 : 3)
+              const base = cache.sessionUsd && cache.weightedAll > 0 ? (cache.sessionUsd / cache.weightedAll) * factor(cache.mainModel || 'opus') : null
+              if (base === null) return null
+              const write = (cache.ttlMinutes ?? 60) >= 60 ? 2 : 1.25
+              const saved = (cache.readTokens ?? 0) * 0.9 * base
+              const coldTax = (cache.rewrittenTokens ?? 0) * (write - 0.1) * base
+              const ifCold = (cache.cachedTokens ?? 0) * (write - 0.1) * base
+              return (
+                <Text>
+                  <Text dimColor>saved </Text><Text color="#4ade80" bold>{usd(saved)}</Text>
+                  <Text dimColor>  cold tax </Text><Text color={coldTax > 0 ? '#f97316' : '#64748b'} bold>{usd(coldTax)}</Text>
+                  <Text dimColor>  going cold +</Text><Text color="#f97316">{usd(ifCold)}</Text>
+                </Text>
+              )
+            })()}
             {cacheState === 'cold' && <Text color="#ef4444">✗ next prompt re-writes the cache</Text>}
             {cacheState === 'fading' && <Text color="#f97316">⚠ under a quarter of the window left</Text>}
           </Box>
