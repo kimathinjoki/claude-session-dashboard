@@ -520,7 +520,7 @@ export const register: Register = on => {
       const points = pointsFor(range, l.buckets ?? [], history, range === 'session' ? null : model, now)
       const series = seriesFor(view, points)
       const percent = view === 'cache'
-      const max = percent ? 100 : Math.max(...series.flatMap(s => s.values), 0)
+      const max = percent ? 100 : Math.max(...series.flatMap(s => s.values).filter(Number.isFinite), 0)
       const height = 8
       const fmt = (v: number) => (view === 'cost' ? usd(v) : percent ? `${Math.round(v)}%` : compact(v))
       const axis = [max, (max * 2) / 3, max / 3, 0].map(fmt)

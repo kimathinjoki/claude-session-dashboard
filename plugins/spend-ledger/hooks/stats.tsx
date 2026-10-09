@@ -95,7 +95,7 @@ export const seriesFor = (view: StatsView, points: Point[]): Series[] => {
       return [{
         name: 'read from cache',
         hue: VIEW_HUE.cache,
-        values: points.map(p => (p.input > 0 ? (p.cacheRead / p.input) * 100 : 0)),
+        values: points.map(p => (p.input > 0 ? (p.cacheRead / p.input) * 100 : Number.NaN)),
       }]
     case 'inout':
       return [
@@ -114,8 +114,8 @@ export const resample = (values: number[], width: number) => {
   for (let i = 0; i < width; i += 1) {
     const from = Math.floor((i * values.length) / width)
     const to = Math.max(from + 1, Math.floor(((i + 1) * values.length) / width))
-    const slice = values.slice(from, to)
-    out.push(slice.reduce((a, b) => a + b, 0) / slice.length)
+    const slice = values.slice(from, to).filter(Number.isFinite)
+    out.push(slice.length ? slice.reduce((a, b) => a + b, 0) / slice.length : Number.NaN)
   }
   return out
 }
@@ -130,7 +130,7 @@ export const stretch = (values: number[], width: number) => {
 
 // One continuous line in box-drawing characters, the way /usage draws it: flat runs as ─,
 // rises and falls as rounded corners joined by │. `height` rows, top first.
-export const lineChart = (values: number[], width: number, height: number, max = Math.max(...values, 0)) => {
+export const lineChart = (values: number[], width: number, height: number, max = Math.max(...values.filter(Number.isFinite), 0)) => {
   const pts = stretch(values, width)
   const top = height - 1
   const rowOf = (v: number) => (max > 0 ? Math.max(0, Math.min(top, Math.round((v / max) * top))) : 0)
@@ -139,8 +139,11 @@ export const lineChart = (values: number[], width: number, height: number, max =
     grid[top - level]![x] = ch
   }
   for (let x = 0; x < width; x += 1) {
+    // No data here (a day with no requests on a ratio view): leave the column empty.
+    if (!Number.isFinite(pts[x]!)) continue
     const y0 = rowOf(pts[x]!)
-    const y1 = x + 1 < width ? rowOf(pts[x + 1]!) : y0
+    const nextKnown = x + 1 < width && Number.isFinite(pts[x + 1]!)
+    const y1 = nextKnown ? rowOf(pts[x + 1]!) : y0
     if (y0 === y1) {
       put(y0, x, '─')
       continue

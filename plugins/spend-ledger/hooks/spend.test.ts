@@ -80,5 +80,7 @@ test('stats: days add up, streaks count and charts draw', async () => {
   // One continuous line: flat, a rounded rise, flat again.
   expect(lineChart([0, 0, 1, 1], 4, 2)).toEqual([' ╭──', '─╯  '])
   expect(lineChart([1, 0], 2, 2)).toEqual(['╮ ', '╰─'])
+  // A day with no data is a gap, not a zero.
+  expect(lineChart([Number.NaN, Number.NaN, 1, 1], 4, 2)).toEqual(['  ──', '    '])
   expect(heatmap(h, now, 4).levels.length).toBe(7)
 })
