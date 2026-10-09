@@ -10,6 +10,16 @@ export type SpendEntry = {
 
 export type SpendSample = { at: number; usd: number }
 
+// Five-minute slices of the session, oldest first, for the charts.
+export type SpendBucket = {
+  start: number
+  usd: number
+  inputTokens: number
+  cacheReadTokens: number
+  outputTokens: number
+  planPercent: number | null
+}
+
 export type ModelSpend = {
   usd: number
   steps: number
@@ -31,6 +41,7 @@ export type Ledger = {
   expanded: boolean
   // By model id: cost (estimated, as the rows are) and what it processed.
   models: Record<string, ModelSpend>
+  buckets: SpendBucket[]
   totalUsd: number
   samples: SpendSample[]
   budgetUsd: number | null

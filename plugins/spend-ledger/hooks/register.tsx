@@ -1,9 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, ModelUsage, Register } from 'claude-code'
 
-import type { Ledger, SpendEntry } from '../types'
+import type { Ledger, SpendBucket, SpendEntry } from '../types'
 
-const initial: Ledger = { entries: [], totalUsd: 0, samples: [], budgetUsd: null, warned: [], limits: [], planBudgetPercent: null, limitSamples: [], expanded: false, models: {} }
+const initial: Ledger = { entries: [], totalUsd: 0, samples: [], budgetUsd: null, warned: [], limits: [], planBudgetPercent: null, limitSamples: [], expanded: false, models: {}, buckets: [] }
 const ledger = atom({ plugin: 'spend-ledger', key: 'ledger' } as const, initial)
 
 const PANE = 'spend'
@@ -34,6 +34,54 @@ export const modelName = (id: string) => id.replace(/^claude-/, '').replace(/-\d
 const MODEL_HUES: Array<[RegExp, string]> = [[/opus/i, '#c084fc'], [/sonnet/i, '#60a5fa'], [/haiku/i, '#34d399'], [/fable/i, '#f9a8d4']]
 export const modelHue = (id: string) => MODEL_HUES.find(([test]) => test.test(id))?.[1] ?? '#cbd5e1'
 const shortTokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`)
+
+export const BUCKET_MS = 5 * 60_000
+const MAX_BUCKETS = 288
+const EIGHTHS = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
+const SPARK = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
+
+// Add to the bucket `now` falls in, opening it (and any empty ones between) when needed.
+export const intoBucket = (
+  buckets: SpendBucket[],
+  now: number,
+  change: (b: SpendBucket) => SpendBucket,
+): SpendBucket[] => {
+  const start = Math.floor(now / BUCKET_MS) * BUCKET_MS
+  const list = [...buckets]
+  let last = list[list.length - 1]
+  if (!last) {
+    list.push({ start, usd: 0, inputTokens: 0, cacheReadTokens: 0, outputTokens: 0, planPercent: null })
+  } else {
+    for (let at = last.start + BUCKET_MS; at <= start; at += BUCKET_MS) {
+      list.push({ start: at, usd: 0, inputTokens: 0, cacheReadTokens: 0, outputTokens: 0, planPercent: last.planPercent })
+    }
+  }
+  last = list[list.length - 1]!
+  list[list.length - 1] = change(last)
+  return list.slice(-MAX_BUCKETS)
+}
+
+// A column chart `height` rows tall, one column per value, as text rows top first.
+export const columns = (values: number[], height: number) => {
+  const max = Math.max(...values, 0)
+  const rows: string[] = []
+  for (let row = height - 1; row >= 0; row -= 1) {
+    rows.push(values.map(v => {
+      const eighths = max > 0 ? Math.round((v / max) * height * 8) : 0
+      const fill = eighths - row * 8
+      return fill >= 8 ? '█' : fill <= 0 ? ' ' : EIGHTHS[fill]!
+    }).join(''))
+  }
+  return rows
+}
+
+export const sparkline = (values: number[], max = Math.max(...values, 0)) =>
+  values.map(v => (max > 0 ? SPARK[Math.min(SPARK.length - 1, Math.round((v / max) * (SPARK.length - 1)))] : SPARK[0])).join('')
+
+const hhmm = (ms: number) => {
+  const d = new Date(ms)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
 
 export const usd = (n: number) => (n >= 100 ? `$${n.toFixed(0)}` : n >= 1 ? `$${n.toFixed(2)}` : `${Math.round(n * 100)}¢`)
 
@@ -161,6 +209,11 @@ export const register: Register = on => {
       await update($, ledger, current => ({
         ...initial,
         ...current,
+        buckets: intoBucket(current.buckets ?? [], now, b => ({
+          ...b,
+          usd: b.usd + Math.max(0, delta),
+          planPercent: (current.limits ?? []).find(w => w.kind === 'five_hour')?.percentUsed ?? b.planPercent,
+        })),
         totalUsd: total,
         entries: current.entries.map(entry => (shares[entry.id] ? { ...entry, usd: entry.usd + shares[entry.id]! } : entry)),
         models: Object.fromEntries(
@@ -210,7 +263,18 @@ export const register: Register = on => {
         cacheReadTokens: m.cacheReadTokens + u.cache_read_input_tokens,
         outputTokens: m.outputTokens + u.output_tokens,
       }
-      return { ...initial, ...current, models }
+      const at = Date.now()
+      return {
+        ...initial,
+        ...current,
+        models,
+        buckets: intoBucket(current.buckets ?? [], at, b => ({
+          ...b,
+          inputTokens: b.inputTokens + u.input_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens,
+          cacheReadTokens: b.cacheReadTokens + u.cache_read_input_tokens,
+          outputTokens: b.outputTokens + u.output_tokens,
+        })),
+      }
     })
     await update($, ledger, l => ({ ...initial, ...l, entries: l.entries.map(entry => (entry.id === id ? { ...entry, steps: entry.steps + 1, model } : entry)) }))
     return result
@@ -347,6 +411,71 @@ export const register: Register = on => {
           <Text dimColor>Costs appear here as the session makes requests.</Text>
         ) : (
           <Box flexDirection="column">
+            {(l.buckets ?? []).length > 0 && (() => {
+              const room = Math.max(12, width - 8)
+              const shown = (l.buckets ?? []).slice(-room)
+              const spendRows = columns(shown.map(b => b.usd), 5)
+              const peak = Math.max(...shown.map(b => b.usd), 0)
+              const inSeries = shown.map(b => b.inputTokens)
+              const outSeries = shown.map(b => b.outputTokens)
+              const hitSeries = shown.map(b => (b.inputTokens > 0 ? b.cacheReadTokens / b.inputTokens : 0))
+              const planSeries = shown.map(b => b.planPercent ?? 0)
+              const models = Object.entries(l.models ?? {}).sort((a, b) => b[1].usd - a[1].usd)
+              const modelTotal = models.reduce((sum, [, m]) => sum + m.usd, 0)
+              const mixWidth = Math.max(10, width - 4)
+              return (
+                <Box flexDirection="column" marginBottom={1}>
+                  <Text bold dimColor>STATS  <Text dimColor>5-minute slices</Text></Text>
+                  <Text dimColor>cost per slice, peak {usd(peak)}</Text>
+                  {spendRows.map((row, i) => (
+                    <Text key={`s${i}`}>
+                      <Text dimColor>{i === 0 ? usd(peak).padStart(6) : '      '}</Text>
+                      <Text color="#4ade80">{row}</Text>
+                    </Text>
+                  ))}
+                  <Text dimColor>{'      '}{hhmm(shown[0]!.start).padEnd(Math.max(6, shown.length - 5))}{hhmm(shown[shown.length - 1]!.start)}</Text>
+
+                  <Text>
+                    <Text dimColor>{'in    '}</Text>
+                    <Text color="#60a5fa">{sparkline(inSeries)}</Text>
+                  </Text>
+                  <Text>
+                    <Text dimColor>{'out   '}</Text>
+                    <Text color="#fb923c">{sparkline(outSeries)}</Text>
+                  </Text>
+                  <Text>
+                    <Text dimColor>{'cache '}</Text>
+                    <Text color="#22d3ee">{sparkline(hitSeries, 1)}</Text>
+                  </Text>
+                  {l.limits.length > 0 && (
+                    <Text>
+                      <Text dimColor>{'5h %  '}</Text>
+                      <Text color={usageHue(planSeries[planSeries.length - 1] ?? 0)}>{sparkline(planSeries, 100)}</Text>
+                    </Text>
+                  )}
+
+                  {models.length > 0 && modelTotal > 0 && (
+                    <Box flexDirection="column" marginTop={1}>
+                      <Text dimColor>model mix</Text>
+                      <Text>
+                        {models.map(([id, m]) => (
+                          <Text key={id} color={modelHue(id)}>{'█'.repeat(Math.max(1, Math.round((m.usd / modelTotal) * mixWidth)))}</Text>
+                        ))}
+                      </Text>
+                      <Text wrap="truncate-end">
+                        {models.map(([id, m]) => (
+                          <Text key={id}>
+                            <Text color={modelHue(id)}>■ </Text>
+                            <Text dimColor>{modelName(id)} {Math.round((m.usd / modelTotal) * 100)}%  </Text>
+                          </Text>
+                        ))}
+                      </Text>
+                    </Box>
+                  )}
+                </Box>
+              )
+            })()}
+
             <Text bold dimColor>WHERE IT WENT</Text>
             {top.map(entry => {
               const [, hue] = activityOf(entry)

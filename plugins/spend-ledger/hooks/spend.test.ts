@@ -49,3 +49,13 @@ test('models read short and keep their family colour', async () => {
   expect(modelHue('claude-opus-5-5')).toBe('#c084fc')
   expect(modelHue('claude-haiku-5-5')).toBe('#34d399')
 })
+
+import { BUCKET_MS, columns, intoBucket, sparkline } from './register'
+
+test('charts: buckets open in five-minute steps and columns scale to the peak', async () => {
+  let buckets = intoBucket([], 0, b => ({ ...b, usd: b.usd + 1 }))
+  buckets = intoBucket(buckets, 2 * BUCKET_MS + 10, b => ({ ...b, usd: b.usd + 3 }))
+  expect(buckets.map(b => b.usd)).toEqual([1, 0, 3])
+  expect(columns([1, 0, 2], 2)).toEqual(['  █', '█ █'])
+  expect(sparkline([0, 0.5, 1], 1)).toBe('▁▅█')
+})
