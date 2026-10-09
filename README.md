@@ -16,7 +16,7 @@ Every panel has buttons with hotkeys for its commands.
 At the prompt of a terminal session:
 
 ```
-/plugin install mission-control --marketplace <owner>/<repo>
+/plugin install mission-control --marketplace kimathinjoki/claude-session-dashboard
 ```
 
 Answer `y` to add the marketplace, choose the user scope, then install the other three the same way (`agent-progress`, `cache-tax`, `spend-ledger`). Mission Control reads their state, so it needs all three.
