@@ -1,15 +1,22 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, ModelUsage, Register } from 'claude-code'
 
-import type { Ledger, SpendBucket, SpendEntry } from '../types'
+import type { Ledger, SpendBucket, SpendEntry, StatsRange, StatsView } from '../types'
+import {
+  LEVEL_HUE, RANGES, RANGE_LABEL, SHADES, VIEWS, VIEW_LABEL, addToDay, brailleLine, compact, dayKey, durationText,
+  emptyHistory, funFact, heatmap, pointsFor, seriesFor, tilesFor,
+} from './stats'
 
-const initial: Ledger = { entries: [], totalUsd: 0, samples: [], budgetUsd: null, warned: [], limits: [], planBudgetPercent: null, limitSamples: [], expanded: false, models: {}, buckets: [] }
+const initial: Ledger = { entries: [], totalUsd: 0, samples: [], budgetUsd: null, warned: [], limits: [], planBudgetPercent: null, limitSamples: [], expanded: false, models: {}, buckets: [], history: emptyHistory(), statsView: 'overview', statsRange: 'session', statsModel: null, sessionStartedAt: null }
 const ledger = atom({ plugin: 'spend-ledger', key: 'ledger' } as const, initial)
 
 const PANE = 'spend'
 const POLL_MS = 2000
 const BURN_WINDOW_MS = 15 * 60_000
 const SHOWN = 8
+const HISTORY_KEY = 'history'
+const SAVE_EVERY_MS = 15_000
+let lastSaved = 0
 const HELPERS = 'helpers'
 
 // The session's cost is exact (it is /cost); how it splits between prompts and workers is
@@ -167,6 +174,12 @@ async function warnOnBudget($: EngineInterface) {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    const saved = (await $.store.get(HISTORY_KEY)) as Ledger['history'] | undefined
+    const startedAt = await $.clock.now()
+    const history = saved && typeof saved === 'object' && saved.days ? saved : emptyHistory()
+    const counted = addToDay({ ...history, sessions: history.sessions + 1, firstSeen: history.firstSeen ?? startedAt }, startedAt, d => ({ ...d, sessions: d.sessions + 1 }))
+    await update($, ledger, l => ({ ...initial, ...l, history: counted, sessionStartedAt: l?.sessionStartedAt ?? startedAt }))
+    await $.store.set(HISTORY_KEY, counted)
     const budget = await $.store.get('budgetUsd')
     const planBudget = await $.store.get('planBudgetPercent')
     await update($, ledger, l => ({
@@ -209,6 +222,21 @@ export const register: Register = on => {
       await update($, ledger, current => ({
         ...initial,
         ...current,
+        history: addToDay(
+          {
+            ...(current.history ?? emptyHistory()),
+            longestSessionMs: Math.max(current.history?.longestSessionMs ?? 0, now - (current.sessionStartedAt ?? now)),
+          },
+          now,
+          d => {
+            const models = { ...d.models }
+            for (const [id, share] of Object.entries(modelShares)) {
+              const m = models[id] ?? { usd: 0, requests: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+              models[id] = { ...m, usd: m.usd + share }
+            }
+            return { ...d, usd: d.usd + Math.max(0, delta), models }
+          },
+        ),
         buckets: intoBucket(current.buckets ?? [], now, b => ({
           ...b,
           usd: b.usd + Math.max(0, delta),
@@ -222,6 +250,10 @@ export const register: Register = on => {
         samples: [...current.samples, { at: now, usd: total }].filter(s => now - s.at <= BURN_WINDOW_MS + POLL_MS),
       }))
       await warnOnBudget($)
+      if (now - lastSaved > SAVE_EVERY_MS) {
+        lastSaved = now
+        await $.store.set(HISTORY_KEY, (await readLedger($)).history)
+      }
     })
 
     return next(e)
@@ -268,6 +300,29 @@ export const register: Register = on => {
         ...initial,
         ...current,
         models,
+        history: addToDay(current.history ?? emptyHistory(), at, d => {
+          const dm = d.models[model] ?? { usd: 0, requests: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+          const fresh = u.input_tokens
+          return {
+            ...d,
+            requests: d.requests + 1,
+            input: d.input + fresh + u.cache_creation_input_tokens + u.cache_read_input_tokens,
+            output: d.output + u.output_tokens,
+            cacheRead: d.cacheRead + u.cache_read_input_tokens,
+            cacheWrite: d.cacheWrite + u.cache_creation_input_tokens,
+            models: {
+              ...d.models,
+              [model]: {
+                ...dm,
+                requests: dm.requests + 1,
+                input: dm.input + fresh + u.cache_creation_input_tokens + u.cache_read_input_tokens,
+                output: dm.output + u.output_tokens,
+                cacheRead: dm.cacheRead + u.cache_read_input_tokens,
+                cacheWrite: dm.cacheWrite + u.cache_creation_input_tokens,
+              },
+            },
+          }
+        }),
         buckets: intoBucket(current.buckets ?? [], at, b => ({
           ...b,
           inputTokens: b.inputTokens + u.input_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens,
@@ -351,6 +406,151 @@ export const register: Register = on => {
       insights.push([`at this rate the budget lasts ${hours >= 1 ? `${hours.toFixed(1)}h` : `${Math.round(hours * 60)}m`}`, hours < 0.5 ? '#f97316' : '#93c5fd'])
     }
 
+    const setStats = (change: Partial<Pick<Ledger, 'statsView' | 'statsRange' | 'statsModel'>>) =>
+      void update($, ledger, current => ({ ...initial, ...current, ...change }))
+    const cycle = <T,>(list: T[], value: T) => list[(list.indexOf(value) + 1) % list.length]!
+
+    const renderStats = () => {
+      const view: StatsView = l.statsView ?? 'overview'
+      const range: StatsRange = l.statsRange ?? 'session'
+      const history = l.history ?? emptyHistory()
+      const modelIds = Object.keys(l.models ?? {})
+      const model = l.statsModel && modelIds.includes(l.statsModel) ? l.statsModel : null
+      const chartWidth = Math.max(16, width - 10)
+
+      const header = (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold color="#fb923c">▤ STATS</Text>
+          <Box columnGap={2} flexWrap="wrap">
+            {VIEWS.map(v => (
+              <Button key={`view-${v}`} plain label={v === view ? `▸ ${VIEW_LABEL[v]}` : VIEW_LABEL[v]} onPress={() => setStats({ statsView: v })} />
+            ))}
+          </Box>
+          <Box columnGap={2} flexWrap="wrap">
+            {RANGES.map(r => (
+              <Button key={`range-${r}`} plain label={r === range ? `● ${RANGE_LABEL[r]}` : RANGE_LABEL[r]} onPress={() => setStats({ statsRange: r })} />
+            ))}
+          </Box>
+          <Box gap={1} flexWrap="wrap">
+            <Button key="cycle-view" hotkey="v" label="Next view" onPress={() => setStats({ statsView: cycle(VIEWS, view) })} />
+            <Button key="cycle-range" hotkey="r" label="Next range" onPress={() => setStats({ statsRange: cycle(RANGES, range) })} />
+            {modelIds.length > 1 && (
+              <Button
+                key="cycle-model"
+                hotkey="m"
+                label={model ? `Model: ${modelName(model)}` : 'Model: all'}
+                onPress={() => setStats({ statsModel: cycle([null, ...modelIds], model) })}
+              />
+            )}
+          </Box>
+        </Box>
+      )
+
+      if (view === 'overview') {
+        const today = history.days[dayKey(now)] ?? null
+        const tiles = tilesFor(history, range, now, today)
+        const weeks = Math.max(8, Math.min(52, Math.floor((width - 6) / 1)))
+        const map = heatmap(history, now, weeks)
+        const dayNames = ['Mon', '   ', 'Wed', '   ', 'Fri', '   ', 'Sun']
+        const tile = (label: string, value: string, hue = '#fdba74') => (
+          <Text key={label}><Text dimColor>{label}: </Text><Text bold color={hue}>{value}</Text></Text>
+        )
+        return (
+          <Box flexDirection="column">
+            {header}
+            <Box flexDirection="column" marginTop={1}>
+              <Text dimColor>{'    '}{map.months}</Text>
+              {map.levels.map((row, d) => (
+                <Text key={`hm-${d}`}>
+                  <Text dimColor>{dayNames[d]} </Text>
+                  {row.map((lvl, w) => (
+                    <Text key={`c-${d}-${w}`} color={lvl < 0 ? '#1e293b' : LEVEL_HUE[lvl]}>{lvl < 0 ? ' ' : SHADES[lvl]}</Text>
+                  ))}
+                </Text>
+              ))}
+              <Text>
+                <Text dimColor>{'    '}Less </Text>
+                {LEVEL_HUE.map((hue, i) => <Text key={`lg-${i}`} color={hue}>{SHADES[i]}</Text>)}
+                <Text dimColor> More</Text>
+              </Text>
+            </Box>
+            <Box flexDirection="column" marginTop={1}>
+              {tile('Favorite model', tiles.favorite ? modelName(tiles.favorite) : '-', tiles.favorite ? modelHue(tiles.favorite) : '#94a3b8')}
+              {tile('Total tokens', compact(tiles.total.input + tiles.total.output))}
+              {tile('Requests', compact(tiles.total.requests))}
+              {tile('Cost', usd(tiles.total.usd), '#4ade80')}
+              {range !== 'session' && tile('Sessions', String(tiles.total.sessions))}
+              {range !== 'session' && (
+                <Text><Text dimColor>Active days: </Text><Text bold color="#fdba74">{tiles.activeDays}</Text><Text dimColor>/{tiles.spanDays}</Text></Text>
+              )}
+              {tiles.busiest && range !== 'session' && tile('Most active day', tiles.busiest)}
+              {tile('Longest session', durationText(tiles.longestSessionMs))}
+              {tile('Longest streak', `${tiles.longestStreak} ${tiles.longestStreak === 1 ? 'day' : 'days'}`)}
+              {tile('Current streak', `${tiles.currentStreak} ${tiles.currentStreak === 1 ? 'day' : 'days'}`)}
+              <Text dimColor>
+                Input {compact(tiles.total.input - tiles.total.cacheRead - tiles.total.cacheWrite)} · Output {compact(tiles.total.output)} · Cache read {compact(tiles.total.cacheRead)} · Cache write {compact(tiles.total.cacheWrite)}
+              </Text>
+              <Text color="#93c5fd">{funFact(tiles.total.input + tiles.total.output)}</Text>
+            </Box>
+          </Box>
+        )
+      }
+
+      const points = pointsFor(range, l.buckets ?? [], history, range === 'session' ? null : model, now)
+      const series = seriesFor(view, points)
+      const percent = view === 'cache'
+      const max = percent ? 100 : Math.max(...series.flatMap(s => s.values), 0)
+      const height = 6
+      const fmt = (v: number) => (view === 'cost' ? usd(v) : percent ? `${Math.round(v)}%` : compact(v))
+      const axis = [max, (max * 2) / 3, max / 3, 0].map(fmt)
+      const labelWidth = Math.max(...axis.map(a => a.length)) + 1
+
+      return (
+        <Box flexDirection="column">
+          {header}
+          {points.length < 2 ? (
+            <Text dimColor>{'\n'}Not enough {range === 'session' ? 'of this session' : 'history'} yet for a chart. It fills in as you work.</Text>
+          ) : (
+            <Box flexDirection="column" marginTop={1}>
+              <Text bold>{VIEW_LABEL[view]} {range === 'session' ? 'per 5 minutes' : 'per day'}{model && range !== 'session' ? `, ${modelName(model)}` : ''}</Text>
+              {series.map(s => {
+                const rows = brailleLine(s.values, chartWidth - labelWidth, height, max)
+                return (
+                  <Box key={`chart-${s.name}`} flexDirection="column">
+                    {rows.map((row, i) => (
+                      <Text key={`r-${s.name}-${i}`}>
+                        <Text dimColor>{((i === 0 ? axis[0] : i === Math.floor(height / 3) ? axis[1] : i === Math.floor((2 * height) / 3) ? axis[2] : i === height - 1 ? axis[3] : '') ?? '').padStart(labelWidth - 1)} ┤</Text>
+                        <Text color={s.hue}>{row}</Text>
+                      </Text>
+                    ))}
+                  </Box>
+                )
+              })}
+              <Text dimColor>{' '.repeat(labelWidth + 1)}{points[0]!.label.padEnd(Math.max(6, chartWidth - labelWidth - 5))}{points[points.length - 1]!.label}</Text>
+              <Text>
+                {series.map(s => (
+                  <Text key={`lg-${s.name}`}><Text color={s.hue}>● </Text><Text dimColor>{s.name}  </Text></Text>
+                ))}
+              </Text>
+              {view === 'tokens' && Object.keys(l.models ?? {}).length > 0 && (
+                <Box flexDirection="column" marginTop={1}>
+                  {Object.entries(l.models).sort((a, b) => b[1].inputTokens + b[1].outputTokens - (a[1].inputTokens + a[1].outputTokens)).map(([id, m]) => {
+                    const all = Object.values(l.models).reduce((t, x) => t + x.inputTokens + x.outputTokens, 0)
+                    return (
+                      <Box key={`mc-${id}`} flexDirection="column">
+                        <Text><Text color={modelHue(id)}>● </Text><Text bold>{modelName(id)}</Text><Text dimColor> ({all > 0 ? (((m.inputTokens + m.outputTokens) / all) * 100).toFixed(1) : 0}%)</Text></Text>
+                        <Text dimColor>  In: {compact(m.inputTokens - m.cacheReadTokens)} · Out: {compact(m.outputTokens)} · Cache: {compact(m.cacheReadTokens)} read</Text>
+                      </Box>
+                    )
+                  })}
+                </Box>
+              )}
+            </Box>
+          )}
+        </Box>
+      )
+    }
+
     return (
       <Box flexDirection="column">
         <Box justifyContent="space-between">
@@ -411,71 +611,6 @@ export const register: Register = on => {
           <Text dimColor>Costs appear here as the session makes requests.</Text>
         ) : (
           <Box flexDirection="column">
-            {(l.buckets ?? []).length > 0 && (() => {
-              const room = Math.max(12, width - 8)
-              const shown = (l.buckets ?? []).slice(-room)
-              const spendRows = columns(shown.map(b => b.usd), 5)
-              const peak = Math.max(...shown.map(b => b.usd), 0)
-              const inSeries = shown.map(b => b.inputTokens)
-              const outSeries = shown.map(b => b.outputTokens)
-              const hitSeries = shown.map(b => (b.inputTokens > 0 ? b.cacheReadTokens / b.inputTokens : 0))
-              const planSeries = shown.map(b => b.planPercent ?? 0)
-              const models = Object.entries(l.models ?? {}).sort((a, b) => b[1].usd - a[1].usd)
-              const modelTotal = models.reduce((sum, [, m]) => sum + m.usd, 0)
-              const mixWidth = Math.max(10, width - 4)
-              return (
-                <Box flexDirection="column" marginBottom={1}>
-                  <Text bold dimColor>STATS  <Text dimColor>5-minute slices</Text></Text>
-                  <Text dimColor>cost per slice, peak {usd(peak)}</Text>
-                  {spendRows.map((row, i) => (
-                    <Text key={`s${i}`}>
-                      <Text dimColor>{i === 0 ? usd(peak).padStart(6) : '      '}</Text>
-                      <Text color="#4ade80">{row}</Text>
-                    </Text>
-                  ))}
-                  <Text dimColor>{'      '}{hhmm(shown[0]!.start).padEnd(Math.max(6, shown.length - 5))}{hhmm(shown[shown.length - 1]!.start)}</Text>
-
-                  <Text>
-                    <Text dimColor>{'in    '}</Text>
-                    <Text color="#60a5fa">{sparkline(inSeries)}</Text>
-                  </Text>
-                  <Text>
-                    <Text dimColor>{'out   '}</Text>
-                    <Text color="#fb923c">{sparkline(outSeries)}</Text>
-                  </Text>
-                  <Text>
-                    <Text dimColor>{'cache '}</Text>
-                    <Text color="#22d3ee">{sparkline(hitSeries, 1)}</Text>
-                  </Text>
-                  {l.limits.length > 0 && (
-                    <Text>
-                      <Text dimColor>{'5h %  '}</Text>
-                      <Text color={usageHue(planSeries[planSeries.length - 1] ?? 0)}>{sparkline(planSeries, 100)}</Text>
-                    </Text>
-                  )}
-
-                  {models.length > 0 && modelTotal > 0 && (
-                    <Box flexDirection="column" marginTop={1}>
-                      <Text dimColor>model mix</Text>
-                      <Text>
-                        {models.map(([id, m]) => (
-                          <Text key={id} color={modelHue(id)}>{'█'.repeat(Math.max(1, Math.round((m.usd / modelTotal) * mixWidth)))}</Text>
-                        ))}
-                      </Text>
-                      <Text wrap="truncate-end">
-                        {models.map(([id, m]) => (
-                          <Text key={id}>
-                            <Text color={modelHue(id)}>■ </Text>
-                            <Text dimColor>{modelName(id)} {Math.round((m.usd / modelTotal) * 100)}%  </Text>
-                          </Text>
-                        ))}
-                      </Text>
-                    </Box>
-                  )}
-                </Box>
-              )
-            })()}
-
             <Text bold dimColor>WHERE IT WENT</Text>
             {top.map(entry => {
               const [, hue] = activityOf(entry)
@@ -583,6 +718,7 @@ export const register: Register = on => {
               </Box>
             )}
             <Text dimColor>split estimated by tokens; the total is /cost</Text>
+            {renderStats()}
           </Box>
         )}
         <Box flexDirection="column" marginTop={1}>

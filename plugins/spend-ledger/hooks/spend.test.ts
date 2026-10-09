@@ -59,3 +59,24 @@ test('charts: buckets open in five-minute steps and columns scale to the peak', 
   expect(columns([1, 0, 2], 2)).toEqual(['  █', '█ █'])
   expect(sparkline([0, 0.5, 1], 1)).toBe('▁▅█')
 })
+
+import { addToDay, brailleLine, dayKey, emptyHistory, heatmap, resample, tilesFor } from './stats'
+
+test('stats: days add up, streaks count and charts draw', async () => {
+  const day = 86_400_000
+  const now = Date.parse('2026-10-09T12:00:00')
+  let h = emptyHistory()
+  for (const back of [0, 1, 2, 5]) {
+    h = addToDay(h, now - back * day, d => ({ ...d, requests: d.requests + 1, input: d.input + 1000, output: d.output + 10 }))
+  }
+  const t = tilesFor(h, '7d', now, null)
+  expect(t.activeDays).toBe(4)
+  expect(t.currentStreak).toBe(3)
+  expect(t.longestStreak).toBe(3)
+  expect(dayKey(now)).toBe('2026-10-09')
+  expect(resample([1, 2, 3, 4], 2)).toEqual([1.5, 3.5])
+  const rows = brailleLine([0, 1, 2, 3], 2, 1)
+  expect(rows.length).toBe(1)
+  expect(rows[0]!.length).toBe(2)
+  expect(heatmap(h, now, 4).levels.length).toBe(7)
+})

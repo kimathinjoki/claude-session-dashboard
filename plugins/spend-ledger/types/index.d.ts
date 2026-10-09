@@ -28,6 +28,21 @@ export type ModelSpend = {
   outputTokens: number
 }
 
+export type DayModel = { usd: number; requests: number; input: number; output: number; cacheRead: number; cacheWrite: number }
+
+export type DayStat = DayModel & { sessions: number; models: Record<string, DayModel> }
+
+// Kept across sessions in the plugin's store: one row per local calendar day.
+export type History = {
+  days: Record<string, DayStat>
+  sessions: number
+  longestSessionMs: number
+  firstSeen: number | null
+}
+
+export type StatsView = 'overview' | 'tokens' | 'cost' | 'cache' | 'inout'
+export type StatsRange = 'session' | '7d' | '30d' | 'all'
+
 export type PlanWindow = { kind: string; percentUsed: number; resetsAt?: string }
 
 export type Ledger = {
@@ -42,6 +57,12 @@ export type Ledger = {
   // By model id: cost (estimated, as the rows are) and what it processed.
   models: Record<string, ModelSpend>
   buckets: SpendBucket[]
+  history: History
+  statsView: StatsView
+  statsRange: StatsRange
+  // Charts one model only when set; null charts them all.
+  statsModel: string | null
+  sessionStartedAt: number | null
   totalUsd: number
   samples: SpendSample[]
   budgetUsd: number | null
