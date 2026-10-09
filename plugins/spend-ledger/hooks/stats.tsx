@@ -131,10 +131,27 @@ export const stretch = (values: number[], width: number) => {
   return Array.from({ length: width }, (_, i) => values[Math.min(values.length - 1, Math.floor((i * values.length) / width))]!)
 }
 
+// Spread `values` across `width` columns joining neighbouring points with straight slopes, so a
+// rise between two days climbs across the columns between them instead of jumping in one. A gap
+// stays a gap. Longer series are averaged down first.
+export const interpolate = (values: number[], width: number) => {
+  if (values.length === 0) return Array(width).fill(0)
+  if (values.length >= width) return resample(values, width)
+  if (values.length === 1) return Array(width).fill(values[0]!)
+  return Array.from({ length: width }, (_, x) => {
+    const at = (x * (values.length - 1)) / (width - 1)
+    const i = Math.floor(at)
+    const a = values[i]!
+    const b = values[Math.min(values.length - 1, i + 1)]!
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return Number.isFinite(a) && at - i < 0.5 ? a : Number.isFinite(b) && at - i >= 0.5 ? b : Number.NaN
+    return a + (b - a) * (at - i)
+  })
+}
+
 // One continuous line in box-drawing characters, the way /usage draws it: flat runs as ─,
 // rises and falls as rounded corners joined by │. `height` rows, top first.
 export const lineChart = (values: number[], width: number, height: number, max = Math.max(...values.filter(Number.isFinite), 0)) => {
-  const pts = stretch(values, width)
+  const pts = interpolate(values, width)
   const top = height - 1
   const rowOf = (v: number) => (max > 0 ? Math.max(0, Math.min(top, Math.round((v / max) * top))) : 0)
   const grid: string[][] = Array.from({ length: height }, () => Array(width).fill(' '))
@@ -167,7 +184,7 @@ const eighthsOf = (pts: number[], height: number, max: number) =>
 
 // Filled under the curve, its top edge smoothed to an eighth of a row. Rows top first.
 export const areaChart = (values: number[], width: number, height: number, max = Math.max(...values.filter(Number.isFinite), 0)) => {
-  const levels = eighthsOf(stretch(values, width), height, max)
+  const levels = eighthsOf(interpolate(values, width), height, max)
   const rows: string[] = []
   for (let row = height - 1; row >= 0; row -= 1) {
     rows.push(levels.map(l => (l < 0 ? ' ' : l - row * 8 >= 8 ? '█' : l - row * 8 <= 0 ? (row === 0 ? '▁' : ' ') : EIGHTHS[l - row * 8]!)).join(''))

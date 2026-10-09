@@ -60,7 +60,7 @@ test('charts: buckets open in five-minute steps and columns scale to the peak', 
   expect(sparkline([0, 0.5, 1], 1)).toBe('▁▅█')
 })
 
-import { addToDay, dayKey, emptyHistory, heatmap, lineChart, resample, stretch, tilesFor } from './stats'
+import { addToDay, dayKey, emptyHistory, heatmap, interpolate, lineChart, resample, stretch, tilesFor } from './stats'
 
 test('stats: days add up, streaks count and charts draw', async () => {
   const day = 86_400_000
@@ -79,6 +79,8 @@ test('stats: days add up, streaks count and charts draw', async () => {
   expect(stretch([1, 2], 4)).toEqual([1, 1, 2, 2])
   // One continuous line: flat, a rounded rise, flat again.
   expect(lineChart([0, 0, 1, 1], 4, 2)).toEqual([' ╭──', '─╯  '])
+  // Two points across four columns climb gradually rather than in one step.
+  expect(interpolate([0, 3], 4)).toEqual([0, 1, 2, 3])
   expect(lineChart([1, 0], 2, 2)).toEqual(['╮ ', '╰─'])
   // A day with no data is a gap, not a zero.
   expect(lineChart([Number.NaN, Number.NaN, 1, 1], 4, 2)).toEqual(['  ──', '    '])
@@ -89,7 +91,7 @@ test('stats: days add up, streaks count and charts draw', async () => {
 import { areaChart, barChart, dotChart } from './stats'
 
 test('chart styles: area fills, bars stand apart, dots stand alone', async () => {
-  expect(areaChart([0, 1], 2, 1)).toEqual(['▁█'])
+  expect(areaChart([0, 1], 3, 1)).toEqual(['▁▄█'])
   expect(barChart([1, 2], 6, 1)).toEqual(['▄▄ ██ '])
   const dots = dotChart([0, 1], 1, 1)
   expect(dots[0]!.length).toBe(1)
