@@ -15,16 +15,18 @@ const QUIET_MS = 3 * 60_000
 const ACTIVE = ['pending', 'running', 'waiting']
 const SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
-// The crew: who a worker is, read from what it was asked to do.
+// The crew: who a worker is, read from what it was asked to do. Every worker is a little Claude
+// crab, dressed for the job: a hard hat and hammer, a monocle, a compass, a set square, a book.
+export const CRAB = '▐▛█▜▌'
 export type Role = { name: string; glyph: string; hue: string }
 const ROLES: Array<{ test: RegExp; role: Role }> = [
-  { test: /re-?review|review|verify|audit|check/i, role: { name: 'INSPECTOR', glyph: '◉', hue: '#22d3ee' } },
-  { test: /implement|build|fix|write|add|create/i, role: { name: 'BUILDER', glyph: '⚒', hue: '#fb923c' } },
-  { test: /explore|map|find|search|survey|locate|sweep/i, role: { name: 'SCOUT', glyph: '⌖', hue: '#4ade80' } },
-  { test: /plan|design|architect|spec/i, role: { name: 'ARCHITECT', glyph: '△', hue: '#a78bfa' } },
-  { test: /guide|docs|setting|how do|research/i, role: { name: 'LIBRARIAN', glyph: '❖', hue: '#f472b6' } },
+  { test: /re-?review|review|verify|audit|check/i, role: { name: 'INSPECTOR', glyph: '◎' + CRAB, hue: '#22d3ee' } },
+  { test: /implement|build|fix|write|add|create/i, role: { name: 'BUILDER', glyph: '⚒' + CRAB, hue: '#fb923c' } },
+  { test: /explore|map|find|search|survey|locate|sweep/i, role: { name: 'SCOUT', glyph: '⌖' + CRAB, hue: '#4ade80' } },
+  { test: /plan|design|architect|spec/i, role: { name: 'ARCHITECT', glyph: '△' + CRAB, hue: '#a78bfa' } },
+  { test: /guide|docs|setting|how do|research/i, role: { name: 'LIBRARIAN', glyph: '≡' + CRAB, hue: '#f472b6' } },
 ]
-const WORKER: Role = { name: 'WORKER', glyph: '●', hue: '#93c5fd' }
+const WORKER: Role = { name: 'WORKER', glyph: '·' + CRAB, hue: '#93c5fd' }
 
 export const roleFor = (row: Pick<AgentRow, 'description' | 'type'>): Role => {
   if (/explore/i.test(row.type)) return ROLES[2]!.role

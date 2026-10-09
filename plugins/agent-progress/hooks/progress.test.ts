@@ -24,3 +24,10 @@ test('the cache bar fills by the share served from cache', async () => {
   expect(cacheShare({ inputTokens: 1000, cacheReadTokens: 960 })).toBe(0.96)
   expect(cacheShare({ inputTokens: 0, cacheReadTokens: 0 })).toBe(0)
 })
+
+test('every worker is a Claude crab dressed for its job', async () => {
+  expect(roleFor({ description: 'Implement Task 17', type: 'general-purpose' }).glyph).toBe('⚒▐▛█▜▌')
+  expect(roleFor({ description: 'Review Task 3', type: 'general-purpose' }).glyph).toBe('◎▐▛█▜▌')
+  expect(roleFor({ description: 'Map consumers', type: 'Explore' }).glyph).toBe('⌖▐▛█▜▌')
+  expect(roleFor({ description: 'something else', type: 'general-purpose' }).glyph).toBe('·▐▛█▜▌')
+})

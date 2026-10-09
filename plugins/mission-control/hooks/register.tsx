@@ -11,18 +11,20 @@ const link = atom({ plugin: 'session-link', key: 'view' } as const, null as neve
 const PANE = 'mission-control'
 const SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
+// The same crabs the Crew panel draws, each dressed for its job.
+const CRAB = '▐▛█▜▌'
 type Role = { glyph: string; hue: string }
 const ROLES: Array<[RegExp, Role]> = [
-  [/re-?review|review|verify|audit|check/i, { glyph: '◉', hue: '#22d3ee' }],
-  [/implement|build|fix|write|add|create/i, { glyph: '⚒', hue: '#fb923c' }],
-  [/explore|map|find|search|survey|locate/i, { glyph: '⌖', hue: '#4ade80' }],
-  [/plan|design|architect|spec/i, { glyph: '△', hue: '#a78bfa' }],
-  [/guide|docs|setting|research/i, { glyph: '❖', hue: '#f472b6' }],
+  [/re-?review|review|verify|audit|check/i, { glyph: '◎' + CRAB, hue: '#22d3ee' }],
+  [/implement|build|fix|write|add|create/i, { glyph: '⚒' + CRAB, hue: '#fb923c' }],
+  [/explore|map|find|search|survey|locate/i, { glyph: '⌖' + CRAB, hue: '#4ade80' }],
+  [/plan|design|architect|spec/i, { glyph: '△' + CRAB, hue: '#a78bfa' }],
+  [/guide|docs|setting|research/i, { glyph: '≡' + CRAB, hue: '#f472b6' }],
 ]
 export const roleOf = (description: string, type: string): Role => {
   if (/explore/i.test(type)) return ROLES[2]![1]
   if (/guide/i.test(type)) return ROLES[4]![1]
-  return ROLES.find(([test]) => test.test(description))?.[1] ?? { glyph: '●', hue: '#93c5fd' }
+  return ROLES.find(([test]) => test.test(description))?.[1] ?? { glyph: '·' + CRAB, hue: '#93c5fd' }
 }
 
 export const tokens = (n: number) =>
