@@ -3,7 +3,7 @@ import type { EngineInterface, ModelUsage, Register } from 'claude-code'
 
 import type { Ledger, SpendBucket, SpendEntry, StatsRange, StatsView } from '../types'
 import {
-  LEVEL_HUE, RANGES, RANGE_LABEL, SHADES, VIEWS, VIEW_LABEL, addToDay, brailleLine, compact, dayKey, durationText,
+  LEVEL_HUE, RANGES, RANGE_LABEL, SHADES, VIEWS, VIEW_LABEL, addToDay, compact, lineChart, dayKey, durationText,
   emptyHistory, funFact, heatmap, pointsFor, seriesFor, tilesFor,
 } from './stats'
 
@@ -500,7 +500,7 @@ export const register: Register = on => {
       const series = seriesFor(view, points)
       const percent = view === 'cache'
       const max = percent ? 100 : Math.max(...series.flatMap(s => s.values), 0)
-      const height = 6
+      const height = 8
       const fmt = (v: number) => (view === 'cost' ? usd(v) : percent ? `${Math.round(v)}%` : compact(v))
       const axis = [max, (max * 2) / 3, max / 3, 0].map(fmt)
       const labelWidth = Math.max(...axis.map(a => a.length)) + 1
@@ -514,19 +514,33 @@ export const register: Register = on => {
             <Box flexDirection="column" marginTop={1}>
               <Text bold>{VIEW_LABEL[view]} {range === 'session' ? 'per 5 minutes' : 'per day'}{model && range !== 'session' ? `, ${modelName(model)}` : ''}</Text>
               {series.map(s => {
-                const rows = brailleLine(s.values, chartWidth - labelWidth, height, max)
+                const rows = lineChart(s.values, chartWidth - labelWidth, height, max)
                 return (
                   <Box key={`chart-${s.name}`} flexDirection="column">
                     {rows.map((row, i) => (
                       <Text key={`r-${s.name}-${i}`}>
-                        <Text dimColor>{((i === 0 ? axis[0] : i === Math.floor(height / 3) ? axis[1] : i === Math.floor((2 * height) / 3) ? axis[2] : i === height - 1 ? axis[3] : '') ?? '').padStart(labelWidth - 1)} ┤</Text>
+                        <Text dimColor>{((i === 0 ? axis[0] : i === Math.floor(height / 3) ? axis[1] : i === Math.floor((2 * height) / 3) ? axis[2] : i === height - 1 ? axis[3] : '') ?? '').padStart(labelWidth - 1)} {i === 0 || i === height - 1 || i === Math.floor(height / 3) || i === Math.floor((2 * height) / 3) ? '┤' : '│'}</Text>
                         <Text color={s.hue}>{row}</Text>
                       </Text>
                     ))}
                   </Box>
                 )
               })}
-              <Text dimColor>{' '.repeat(labelWidth + 1)}{points[0]!.label.padEnd(Math.max(6, chartWidth - labelWidth - 5))}{points[points.length - 1]!.label}</Text>
+              {(() => {
+                const plot = chartWidth - labelWidth
+                const first = points[0]!.label
+                const middle = points[Math.floor(points.length / 2)]!.label
+                const last = points[points.length - 1]!.label
+                const gap = Math.max(1, Math.floor((plot - first.length - middle.length - last.length) / 2))
+                return (
+                  <Text dimColor>
+                    {' '.repeat(labelWidth + 1)}{first}{' '.repeat(gap)}{middle}{' '.repeat(Math.max(1, plot - first.length - gap - middle.length - last.length))}{last}
+                  </Text>
+                )
+              })()}
+              {range !== 'session' && points.filter(p => p.input + p.output > 0).length <= 1 && (
+                <Text color="#93c5fd">› daily history started recently; This session shows today in 5-minute slices</Text>
+              )}
               <Text>
                 {series.map(s => (
                   <Text key={`lg-${s.name}`}><Text color={s.hue}>● </Text><Text dimColor>{s.name}  </Text></Text>

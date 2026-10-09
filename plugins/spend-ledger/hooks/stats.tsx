@@ -111,31 +111,37 @@ export const resample = (values: number[], width: number) => {
   return out
 }
 
-// A line chart in braille: each cell holds 2 x 4 dots, so `width` cells plot 2 x width points
-// and `height` rows give 4 x height levels. Rows top first.
-const BRAILLE = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]] as const
-export const brailleLine = (values: number[], width: number, height: number, max = Math.max(...values, 0)) => {
-  const cols = width * 2
-  const pts = resample(values, cols)
-  const levels = height * 4
-  const grid: number[][] = Array.from({ length: height }, () => Array(width).fill(0))
-  const yOf = (v: number) => (max > 0 ? Math.min(levels - 1, Math.round((v / max) * (levels - 1))) : 0)
-  const plot = (x: number, y: number) => {
-    const row = height - 1 - Math.floor(y / 4)
-    const dotRow = 3 - (y % 4)
-    const cell = Math.floor(x / 2)
-    if (row >= 0 && row < height && cell < width) grid[row]![cell]! |= BRAILLE[dotRow]![x % 2]!
+// Spread `values` across exactly `width` columns: each point holds its share of the width,
+// so 30 days fill the chart rather than its left half. Longer series are averaged down.
+export const stretch = (values: number[], width: number) => {
+  if (values.length === 0) return Array(width).fill(0)
+  if (values.length >= width) return resample(values, width)
+  return Array.from({ length: width }, (_, i) => values[Math.min(values.length - 1, Math.floor((i * values.length) / width))]!)
+}
+
+// One continuous line in box-drawing characters, the way /usage draws it: flat runs as ─,
+// rises and falls as rounded corners joined by │. `height` rows, top first.
+export const lineChart = (values: number[], width: number, height: number, max = Math.max(...values, 0)) => {
+  const pts = stretch(values, width)
+  const top = height - 1
+  const rowOf = (v: number) => (max > 0 ? Math.max(0, Math.min(top, Math.round((v / max) * top))) : 0)
+  const grid: string[][] = Array.from({ length: height }, () => Array(width).fill(' '))
+  const put = (level: number, x: number, ch: string) => {
+    grid[top - level]![x] = ch
   }
-  pts.forEach((v, x) => {
-    const y = yOf(v)
-    plot(x, y)
-    // Join to the previous point with a vertical run so the line reads as one stroke.
-    if (x > 0) {
-      const prev = yOf(pts[x - 1]!)
-      for (let k = Math.min(prev, y) + 1; k < Math.max(prev, y); k += 1) plot(x, k)
+  for (let x = 0; x < width; x += 1) {
+    const y0 = rowOf(pts[x]!)
+    const y1 = x + 1 < width ? rowOf(pts[x + 1]!) : y0
+    if (y0 === y1) {
+      put(y0, x, '─')
+      continue
     }
-  })
-  return grid.map(row => row.map(bits => String.fromCharCode(0x2800 + bits)).join(''))
+    // Leaving y0 at this column, arriving at y1 in the same column, the run between as │.
+    put(y0, x, y1 > y0 ? '╯' : '╮')
+    put(y1, x, y1 > y0 ? '╭' : '╰')
+    for (let k = Math.min(y0, y1) + 1; k < Math.max(y0, y1); k += 1) put(k, x, '│')
+  }
+  return grid.map(row => row.join(''))
 }
 
 // GitHub-style activity: 7 rows (Mon to Sun) by `weeks` columns, each day shaded by tokens.
