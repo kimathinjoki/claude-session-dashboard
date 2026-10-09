@@ -3,7 +3,7 @@ import type { EngineInterface, ModelUsage, Register } from 'claude-code'
 
 import type { Ledger, SpendEntry } from '../types'
 
-const initial: Ledger = { entries: [], totalUsd: 0, samples: [], budgetUsd: null, warned: [] }
+const initial: Ledger = { entries: [], totalUsd: 0, samples: [], budgetUsd: null, warned: [], limits: [], planBudgetPercent: null, limitSamples: [] }
 const ledger = atom({ plugin: 'spend-ledger', key: 'ledger' } as const, initial)
 
 const PANE = 'spend'
@@ -63,12 +63,41 @@ const bar = (share: number, width: number) => {
 let pending: Record<string, number> = {}
 const promptText = new Map<string, string>()
 
+// State saved by an earlier version may lack fields added since; fill them in.
+async function readLedger($: EngineInterface): Promise<Ledger> {
+  return { ...initial, ...(await read($, ledger)) }
+}
+
+export const windowLabel = (kind: string) =>
+  kind === 'five_hour' ? '5-hour window' : kind === 'seven_day' ? 'weekly' : kind.replace(/_/g, ' ')
+
+export const resetsIn = (resetsAt: string | undefined, now: number) => {
+  if (!resetsAt) return ''
+  const ms = Date.parse(resetsAt) - now
+  if (!(ms > 0)) return 'resetting'
+  const h = Math.floor(ms / 3_600_000)
+  const m = Math.floor((ms % 3_600_000) / 60_000)
+  return h >= 24 ? `resets in ${Math.floor(h / 24)}d ${h % 24}h` : `resets in ${h}h ${String(m).padStart(2, '0')}m`
+}
+
+export const usageHue = (percent: number) => (percent >= 85 ? '#ef4444' : percent >= 60 ? '#f97316' : '#22c55e')
+
 async function ensureEntry($: EngineInterface, entry: SpendEntry) {
-  await update($, ledger, l => (l.entries.some(one => one.id === entry.id) ? l : { ...l, entries: [...l.entries, entry] }))
+  await update($, ledger, l => ((l.entries ?? []).some(one => one.id === entry.id) ? l : { ...l, entries: [...l.entries, entry] }))
 }
 
 async function warnOnBudget($: EngineInterface) {
-  const l = await read($, ledger)
+  const l = await readLedger($)
+  const fiveHour = l.limits.find(w => w.kind === 'five_hour')
+  if (l.planBudgetPercent && fiveHour) {
+    const level = fiveHour.percentUsed >= 100 ? 100 : fiveHour.percentUsed >= l.planBudgetPercent ? l.planBudgetPercent : null
+    if (level !== null && !l.warned.includes(1000 + level)) {
+      $.ui.toast(level === 100
+        ? 'The 5-hour plan window is used up.'
+        : `${Math.round(fiveHour.percentUsed)}% of the 5-hour plan window used (your line is ${l.planBudgetPercent}%).`, { timeoutMs: 10_000 })
+      await update($, ledger, current => ({ ...initial, ...current, warned: [...current.warned, 1000 + level] }))
+    }
+  }
   if (!l.budgetUsd) return
   const share = l.totalUsd / l.budgetUsd
   for (const level of [0.8, 1]) {
@@ -84,16 +113,35 @@ async function warnOnBudget($: EngineInterface) {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const budget = await $.store.get('budgetUsd')
-    if (typeof budget === 'number') await update($, ledger, l => ({ ...l, budgetUsd: budget }))
-    await $.command.register({ name: 'spend', description: 'Spend panel: /spend opens it, /spend budget 50 sets a session budget, /spend budget off clears it' })
+    const planBudget = await $.store.get('planBudgetPercent')
+    await update($, ledger, l => ({
+      ...initial,
+      ...l,
+      budgetUsd: typeof budget === 'number' ? budget : l?.budgetUsd ?? null,
+      planBudgetPercent: typeof planBudget === 'number' ? planBudget : l?.planBudgetPercent ?? null,
+    }))
+    await $.command.register({ name: 'spend', description: 'Spend panel: /spend opens it; /spend budget 50 (dollars, API key) or /spend budget 80% (share of the 5-hour plan window); /spend budget off clears it' })
     void $.ui.open({ id: PANE, title: 'Spend' })
 
     $.clock.every(POLL_MS, async () => {
       const usage = await $.session.usage()
-      const total = usage.cost?.usd
-      if (total === undefined) return
       const now = await $.clock.now()
-      const l = await read($, ledger)
+      const limits = (usage.rateLimits ?? []).map(w => ({ kind: w.kind, percentUsed: w.percentUsed, resetsAt: w.resetsAt }))
+      const fiveHour = limits.find(w => w.kind === 'five_hour')
+      await update($, ledger, current => ({
+        ...initial,
+        ...current,
+        limits,
+        limitSamples: fiveHour
+          ? [...(current.limitSamples ?? []), { at: now, usd: fiveHour.percentUsed }].filter(s => now - s.at <= BURN_WINDOW_MS + POLL_MS)
+          : current.limitSamples ?? [],
+      }))
+      const total = usage.cost?.usd
+      if (total === undefined) {
+        await warnOnBudget($)
+        return
+      }
+      const l = await readLedger($)
       const delta = total - l.totalUsd
       const shares = delta > 0.000001 ? apportion(delta, pending) : {}
       pending = {}
@@ -102,6 +150,7 @@ export const register: Register = on => {
         await ensureEntry($, { id: HELPERS, kind: 'helpers', label: 'Engine helpers (titles, compaction, forks)', model: '', usd: 0, steps: 0, startedAt: now })
       }
       await update($, ledger, current => ({
+        ...initial,
         ...current,
         totalUsd: total,
         entries: current.entries.map(entry => (shares[entry.id] ? { ...entry, usd: entry.usd + shares[entry.id]! } : entry)),
@@ -136,7 +185,7 @@ export const register: Register = on => {
       await ensureEntry($, { id, kind: 'prompt', label: text ? text.slice(0, 60) : 'Follow-up (agent results, wake-ups)', model, usd: 0, steps: 0, startedAt: await $.clock.now() })
     }
     pending[id] = (pending[id] ?? 0) + weight(result.usage, model)
-    await update($, ledger, l => ({ ...l, entries: l.entries.map(entry => (entry.id === id ? { ...entry, steps: entry.steps + 1, model } : entry)) }))
+    await update($, ledger, l => ({ ...initial, ...l, entries: l.entries.map(entry => (entry.id === id ? { ...entry, steps: entry.steps + 1, model } : entry)) }))
     return result
   })
 
@@ -145,13 +194,21 @@ export const register: Register = on => {
     if (word === 'budget') {
       if (value === 'off') {
         await $.store.delete('budgetUsd')
-        await update($, ledger, l => ({ ...l, budgetUsd: null, warned: [] }))
-        return { text: 'Session budget cleared.' }
+        await $.store.delete('planBudgetPercent')
+        await update($, ledger, l => ({ ...initial, ...l, budgetUsd: null, planBudgetPercent: null, warned: [] }))
+        return { text: 'Budget cleared.' }
+      }
+      if (value?.endsWith('%')) {
+        const percent = Number(value.slice(0, -1))
+        if (!(percent > 0 && percent <= 100)) return { text: 'Give the plan line as a share of the 5-hour window: /spend budget 80%' }
+        await $.store.set('planBudgetPercent', percent)
+        await update($, ledger, l => ({ ...initial, ...l, planBudgetPercent: percent, warned: [] }))
+        return { text: `You will be told when the 5-hour plan window passes ${percent}%.` }
       }
       const amount = Number(value)
       if (!(amount > 0)) return { text: 'Give the budget in dollars: /spend budget 50' }
       await $.store.set('budgetUsd', amount)
-      await update($, ledger, l => ({ ...l, budgetUsd: amount, warned: [] }))
+      await update($, ledger, l => ({ ...initial, ...l, budgetUsd: amount, warned: [] }))
       return { text: `Session budget set to ${usd(amount)}. You will be told at 80% and at 100%.` }
     }
     await $.ui.open({ id: PANE, title: 'Spend', focus: true })
@@ -160,8 +217,11 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
-    const l = await read($, ledger)
+    const l = await readLedger($)
     const now = await $.clock.now()
+    const onPlan = l.limits.length > 0
+    const fiveHour = l.limits.find(w => w.kind === 'five_hour')
+    const planBurn = burnPerHour(l.limitSamples ?? [], now)
     const width = Math.max(24, (e.props.bodyColumns ?? 40) - 2)
     const barWidth = Math.max(6, Math.min(16, width - 30))
     const burn = burnPerHour(l.samples, now)
@@ -200,14 +260,45 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         <Box justifyContent="space-between">
-          <Text bold color="#4ade80">$ SPEND</Text>
+          <Text bold color="#4ade80">{onPlan ? '◆ USAGE' : '$ SPEND'}</Text>
           <Text>
-            <Text bold color="#4ade80">{usd(l.totalUsd)}</Text>
+            {onPlan && fiveHour ? (
+              <Text bold color={usageHue(fiveHour.percentUsed)}>{Math.round(fiveHour.percentUsed)}% of 5h</Text>
+            ) : (
+              <Text bold color="#4ade80">{usd(l.totalUsd)}</Text>
+            )}
             <Text dimColor>  ·  </Text>
-            <Text bold color={burn > 0 ? '#fb923c' : '#64748b'}>{usd(burn)}/h</Text>
+            {onPlan ? (
+              <Text bold color={planBurn > 0 ? '#fb923c' : '#64748b'}>{planBurn.toFixed(1)}%/h</Text>
+            ) : (
+              <Text bold color={burn > 0 ? '#fb923c' : '#64748b'}>{usd(burn)}/h</Text>
+            )}
           </Text>
         </Box>
         <Text dimColor>{'─'.repeat(width)}</Text>
+
+        {onPlan && (
+          <Box flexDirection="column" marginBottom={1}>
+            <Text bold dimColor>PLAN WINDOWS</Text>
+            {l.limits.map(w => (
+              <Text key={w.kind} wrap="truncate-end">
+                <Text dimColor>{windowLabel(w.kind).padEnd(14)}</Text>
+                <Text color={usageHue(w.percentUsed)}>{bar(Math.min(1, w.percentUsed / 100), Math.max(8, width - 34))}</Text>
+                <Text bold color={usageHue(w.percentUsed)}> {Math.round(w.percentUsed)}%</Text>
+                <Text dimColor>  {resetsIn(w.resetsAt, now)}</Text>
+              </Text>
+            ))}
+            {fiveHour && planBurn > 0 && fiveHour.percentUsed < 100 && (
+              <Text color={(100 - fiveHour.percentUsed) / planBurn < 1 ? '#f97316' : '#93c5fd'}>
+                › at this pace the 5-hour window lasts {(() => { const h = (100 - fiveHour.percentUsed) / planBurn; return h >= 1 ? `${h.toFixed(1)}h` : `${Math.round(h * 60)}m` })()}
+              </Text>
+            )}
+            {l.planBudgetPercent !== null && fiveHour && fiveHour.percentUsed >= l.planBudgetPercent && (
+              <Text color={fiveHour.percentUsed >= 100 ? '#ef4444' : '#f97316'}>⚠ past your {l.planBudgetPercent}% line</Text>
+            )}
+            <Text dimColor>dollar figures below are the API-price value of this work, not a charge</Text>
+          </Box>
+        )}
 
         {l.budgetUsd !== null && (
           <Box flexDirection="column" marginBottom={1}>
@@ -273,11 +364,21 @@ export const register: Register = on => {
         <Box flexDirection="column" marginTop={1}>
           <Text bold dimColor>BUDGET</Text>
           <Box gap={1} flexWrap="wrap">
-            <Button key="b25" hotkey="1" label="$25" onPress={() => void $.command.run({ command: 'spend', args: 'budget 25' })} />
-            <Button key="b50" hotkey="2" label="$50" onPress={() => void $.command.run({ command: 'spend', args: 'budget 50' })} />
-            <Button key="b100" hotkey="3" label="$100" onPress={() => void $.command.run({ command: 'spend', args: 'budget 100' })} />
-            <Button key="b250" hotkey="4" label="$250" onPress={() => void $.command.run({ command: 'spend', args: 'budget 250' })} />
-            {l.budgetUsd !== null && <Button key="boff" hotkey="0" label="Clear" onPress={() => void $.command.run({ command: 'spend', args: 'budget off' })} />}
+            {onPlan ? (
+              <>
+                <Button key="p50" hotkey="1" label="Warn at 50%" onPress={() => void $.command.run({ command: 'spend', args: 'budget 50%' })} />
+                <Button key="p75" hotkey="2" label="75%" onPress={() => void $.command.run({ command: 'spend', args: 'budget 75%' })} />
+                <Button key="p90" hotkey="3" label="90%" onPress={() => void $.command.run({ command: 'spend', args: 'budget 90%' })} />
+              </>
+            ) : (
+              <>
+                <Button key="b25" hotkey="1" label="$25" onPress={() => void $.command.run({ command: 'spend', args: 'budget 25' })} />
+                <Button key="b50" hotkey="2" label="$50" onPress={() => void $.command.run({ command: 'spend', args: 'budget 50' })} />
+                <Button key="b100" hotkey="3" label="$100" onPress={() => void $.command.run({ command: 'spend', args: 'budget 100' })} />
+                <Button key="b250" hotkey="4" label="$250" onPress={() => void $.command.run({ command: 'spend', args: 'budget 250' })} />
+              </>
+            )}
+            {(l.budgetUsd !== null || l.planBudgetPercent !== null) && <Button key="boff" hotkey="0" label="Clear" onPress={() => void $.command.run({ command: 'spend', args: 'budget off' })} />}
           </Box>
         </Box>
       </Box>

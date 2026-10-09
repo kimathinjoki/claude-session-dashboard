@@ -143,7 +143,17 @@ export const register: Register = on => {
           </Box>
         )}
 
-        <Section title="$ SPEND" hue="#4ade80" right={`${usd(burn)}/h`} />
+        <Section title={spend?.limits?.length ? '◆ USAGE' : '$ SPEND'} hue="#4ade80" right={spend?.limits?.length ? 'plan' : `${usd(burn)}/h`} />
+        {(spend?.limits ?? []).map((w: any) => {
+          const hue = w.percentUsed >= 85 ? '#ef4444' : w.percentUsed >= 60 ? '#f97316' : '#22c55e'
+          return (
+            <Text key={w.kind}>
+              <Text dimColor>{(w.kind === 'five_hour' ? '5-hour' : w.kind === 'seven_day' ? 'weekly' : w.kind).padEnd(8)}</Text>
+              <Text color={hue}>{bar(Math.min(1, w.percentUsed / 100), Math.max(10, width - 16))}</Text>
+              <Text bold color={hue}> {Math.round(w.percentUsed)}%</Text>
+            </Text>
+          )
+        })}
         {budget !== null && (
           <Text>
             <Text color={budgetHue}>{bar(Math.min(1, budgetShare), Math.max(10, width - 18))}</Text>

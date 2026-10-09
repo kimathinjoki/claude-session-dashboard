@@ -27,3 +27,16 @@ test('money reads short and work is grouped by what it was', async () => {
   expect(activityOf({ kind: 'agent', label: 'Implement Task 5: cognitive client' })[0]).toBe('building')
   expect(activityOf({ kind: 'prompt', label: 'keep going' })[0]).toBe('conversation')
 })
+
+import { resetsIn, usageHue, windowLabel } from './register'
+
+test('plan windows read as a share and a reset time', async () => {
+  expect(windowLabel('five_hour')).toBe('5-hour window')
+  expect(windowLabel('seven_day')).toBe('weekly')
+  const now = Date.parse('2026-10-09T12:00:00Z')
+  expect(resetsIn('2026-10-09T14:05:00Z', now)).toBe('resets in 2h 05m')
+  expect(resetsIn('2026-10-12T12:00:00Z', now)).toBe('resets in 3d 0h')
+  expect(usageHue(40)).toBe('#22c55e')
+  expect(usageHue(70)).toBe('#f97316')
+  expect(usageHue(90)).toBe('#ef4444')
+})
